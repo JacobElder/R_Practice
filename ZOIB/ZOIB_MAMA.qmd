@@ -1,0 +1,549 @@
+---
+title: "Slider Data, Proportions, and Regression"
+format:
+  revealjs:
+    theme: blood
+    highlight-style: monokai
+    toc-depth: 2
+    self-contained: true
+    citations-hover: true
+    code-link: true
+    code-block-bg: "#272822"
+    css: "./assets/slide-style.css"
+editor: visual
+width: 1360
+height: 800
+echo: true
+---
+
+```{r, include=F}
+library(groundhog)
+pkgs <-  c("corrr","tidyverse","ggplot2","lme4","lmerTest", "ggeffects", "sjPlot", "insight", "data.table", "here", "arrow", "jtools", "r2glmm","performance","bayestestR", "patchwork","brms","rstanarm","ordbetareg")
+library(parallel)
+groundhog.day <- '2022-07-25'
+groundhog.library(pkgs, groundhog.day)
+```
+
+```{r, include=F}
+#study 1
+longDf1 <- read_parquet("~/Documents/GitHub/NormIdeol/main/data/PFfullDf.parquet")
+
+longDf1$partyN <- as.factor(longDf1$partyN)
+longDf1$Rep <- as.factor(longDf1$Rep)
+contrasts(longDf1$Rep) <- contr.sum(3)
+longDf1$RepN <- as.factor(longDf1$RepN)
+longDf1$RepN <- relevel(longDf1$RepN,"In")
+longDf1$Info <- as.factor(longDf1$Info)
+contrasts(longDf1$Info) <- contr.sum(2)
+longDf1$partyN <- as.factor(longDf1$partyN)
+contrasts(longDf1$partyN) <- contr.sum(2)
+demDf <- subset(longDf1, partyN == "Dem")
+repDf <- subset(longDf1, partyN == "Rep")
+longDf1$politStre <- as.factor(abs(4-longDf1$Polit))
+InfoDf1 <- subset(longDf1, Info == "Info")
+issueDf1 <- longDf1[!duplicated(longDf1$issues),]
+longDf1$inDev <- abs(longDf1$eval - longDf1$bootEvalIn)
+longDf1$outDev <- abs(longDf1$eval - longDf1$bootEvalOut)
+
+#study 2
+longDf2 <- read_parquet("~/Documents/GitHub/NormIdeol/main/data/PFfullDf2.parquet")
+
+longDf2$partyN <- as.factor(longDf2$partyN)
+longDf2$Rep <- as.factor(longDf2$Rep)
+longDf2$Rep <- factor(longDf2$Rep, c("Non","Rep","Dem"))
+longDf2$Rep <- relevel(longDf2$Rep,"Non")
+contrasts(longDf2$Rep) <- contr.sum(3)
+longDf2$RepN <- as.factor(longDf2$RepN)
+longDf2$RepN <- relevel(longDf2$RepN,"In")
+longDf2$Info <- as.factor(longDf2$Info)
+contrasts(longDf2$Info) <- contr.sum(2)
+longDf2$partyN <- as.factor(longDf2$partyN)
+contrasts(longDf2$partyN) <- contr.sum(2)
+demDf <- subset(longDf2, partyN == "Dem")
+repDf <- subset(longDf2, partyN == "Rep")
+longDf2$politStre <- as.factor(abs(4-longDf2$Polit))
+InfoDf2 <- subset(longDf2, Info == "Info")
+issueDf2 <- longDf2[!duplicated(longDf2$issues),]
+longDf2$inDev <- abs(longDf2$eval - longDf2$bootEvalIn)
+longDf2$outDev <- abs(longDf2$eval - longDf2$bootEvalOut)
+
+indDiffs1 <- longDf1[!duplicated(longDf1$subID),]
+indDiffs2 <- longDf2[!duplicated(longDf2$subID),]
+
+indDiffs1$inTherm <- indDiffs1$inTherm / 100
+indDiffs1$outTherm <- indDiffs1$outTherm / 100
+
+indDiffs2$inTherm <- indDiffs2$inTherm / 100
+indDiffs2$outTherm <- indDiffs2$outTherm / 100
+```
+
+## Slider Scale Survey Questions
+
+![](https://cdn.questionpro.com/userimages/site_media/SL1.png){alt="Slider Question | Slider scale survey | QuestionPro"}
+
+Range from 0 to 100
+
+## Histograms of Slider Data
+
+```{r}
+( qplot(indDiffs1$inTherm, bins=40) + qplot(indDiffs2$inTherm, bins=40) ) / ( qplot(indDiffs1$outTherm, bins=40) + qplot(indDiffs2$outTherm, bins=40) )
+```
+
+## Linear Regression
+
+```{r}
+OLS.out.m.1 <- lm(outTherm ~ CSEid, data = indDiffs1)
+tidy(OLS.out.m.1)
+```
+
+## Check Model Assumptions
+
+```{r}
+check_model(OLS.out.m.1)
+```
+
+------------------------------------------------------------------------
+
+Linear model is poor representation of data due to generating predictions above 1 and below 0...
+
+Model predictions don't align with observed data
+
+Heteroscedasticity
+
+Non-linearity
+
+## Quasi-Binomial
+
+Outcome of multiple binomial trials
+
+```{r}
+QB.out.m.1 <- glm(outTherm ~ CSEid, family = quasibinomial, data = indDiffs1)
+tidy(QB.out.m.1)
+```
+
+## Check Model Assumptions
+
+```{r}
+check_model(QB.out.m.1)
+```
+
+------------------------------------------------------------------------
+
+Heteroscedasticity
+
+## A solution: Beta distribution
+
+```{r}
+#define range
+p = seq(0,1, length=100)
+
+#plot several Beta distributions
+plot(p, dbeta(p, 2, 10), ylab='density', type ='l', col='purple')
+lines(p, dbeta(p, 2, 2), col='red') 
+lines(p, dbeta(p, 5, 2), col='blue')
+lines(p, dbeta(p, 2, 3), col='pink')
+
+#add legend
+legend(.7, 4, c('Beta(2, 10)','Beta(2, 2)','Beta(1,1)','Beta(2, 3)'),
+       lty=c(1,1,1),col=c('purple', 'red', 'blue','pink'))
+```
+
+------------------------------------------------------------------------
+
+In beta regression, regressors can have effect on both mean and precision of distribution.
+
+... But, beta distributions are contained between 0s and 1s but do not contain 0s and 1s. So we need to introduce a bernoulli distribution for 0s and 1s
+
+## Zero-One-Inflated-Beta (ZOIB) Distribution
+
+Distinguishes between those who respond 1 and not 1, those who respond 0 and not 0 (logistic), and those who respond between 0 and 1 (beta distribution).
+
+```{r}
+rzoib <- function(n = 1e4, alpha=.1, gamma=.45, mu=.4, phi=3) {
+  a <- mu * phi
+  b <- (1 - mu) * phi
+  y <- vector("numeric", n)
+  y <- ifelse(
+    rbinom(n, 1, alpha), 
+    rbinom(n, 1, gamma), 
+    rbeta(n, a, b)
+  )
+  y
+}
+
+set.seed(10)
+groupA <- rzoib(100, a=.11, g=.9, m=.5, p=9)
+groupB <- rzoib(100, a=.11, g=.1, m=.5, p=9)
+```
+
+## False Positive Rates for Slider (i.e., ZOIB) Distributions
+
+### Create FP function
+
+```{r}
+FPrate <- function(n,a,g,m,p,iter){
+  mat <- matrix(nrow=iter,ncol=2)
+  for(i in 1:iter){
+  
+    groupA <- rzoib(n, a, g, m, p)
+    groupB <- rzoib(n, a, g, m, p)
+  
+    out<-t.test(groupA,groupB)
+    mat[i,] <- c(out$p.value, out$p.value<.05)
+  }
+  df <- as.data.frame(mat)
+  colnames(df) <- c("p","FP")
+  df
+}
+```
+
+------------------------------------------------------------------------
+
+### Beta Distribution for Mean in Middle and Nominal ZO-inflation
+
+```{r}
+set.seed(10)
+FPdf <- FPrate(n=100,a=.10,g=.5,m=.5,p=5,iter=10000)
+paste0("False Positive Rate is: ", mean(FPdf$FP))
+qplot(rzoib(n=100,a=.10,g=.5,m=.5,p=5), main = "Example Distribution") + jtools::theme_apa()
+```
+
+------------------------------------------------------------------------
+
+### Skewed Beta Distribution with Nominal ZO-inflation
+
+```{r}
+set.seed(10)
+FPdf <- FPrate(100, a=.10, g=.5, m=.2, p=6, iter=10000)
+paste0("False Positive Rate is: ", mean(FPdf$FP))
+qplot(rzoib(100, a=.10, g=.5, m=.2, p=6), main = "Example Distribution") + jtools::theme_apa()
+```
+
+------------------------------------------------------------------------
+
+### Left Skewed Beta Distribution with One Inflation
+
+```{r}
+set.seed(10)
+FPdf <- FPrate(100, a=.60, g=.80, m=.65, p=.8, iter=10000)
+paste0("False Positive Rate is: ", mean(FPdf$FP))
+qplot(rzoib(100, a=.60, g=.80, m=.65, p=8), main = "Example Distribution") + jtools::theme_apa()
+```
+
+------------------------------------------------------------------------
+
+### Normal Beta with One Inflation
+
+```{r}
+set.seed(10)
+FPdf <- FPrate(100, a=.50, g=.80, m=.5, p=6, iter=10000)
+paste0("False Positive Rate is: ", mean(FPdf$FP))
+qplot(rzoib(100, a=.50, g=.80, m=.5, p=6), main = "Example Distribution") + jtools::theme_apa()
+```
+
+## Power Analyses
+
+### Create Power Function
+
+```{r}
+powerEst <- function(n1,a1,g1,m1,p1,n2=NULL,a2=NULL,g2=NULL,m2=NULL,p2=NULL,iter){
+mat <- matrix(nrow=iter,ncol=6)
+for(i in 1:iter){
+  
+  if(is.null(n2)){
+    n2=n1
+  }
+  if(is.null(a2)){
+    a2=a1
+  }
+  if(is.null(g2)){
+    g2=g1
+  }
+  if(is.null(m2)){
+    m2=m1
+  }
+  if(is.null(p2)){
+    p2=p1
+  }
+  
+  groupA <- rzoib(n=n1, a=a1, g=g1, m=m1, p=p1)
+  groupB <- rzoib(n=n2, a=a2, g=g2, m=m2, p=p2)
+  d<- lsr::cohensD(groupA,groupB)
+  
+  out<-t.test(groupA,groupB)
+  m <- mean(c(mean(groupA) - mean(groupB)))
+  s <- mean(c(sd(groupA),sd(groupB)))
+  pt <- power.t.test(n=round(mean(c(n1,n2))),delta=m,sd=s)
+  
+  mat[i,] <- c(out$p.value, 
+               out$p.value>.05,
+               m,
+               s,
+               d,
+              pt$power
+               )
+}
+df <- as.data.frame(mat)
+colnames(df) <- c("p","Miss","meanDiff","sd","d","empiricalPower")
+return(df)
+}
+```
+
+------------------------------------------------------------------------
+
+### Nominal ZO-Inflation, Difference in Middle of Beta Distribution
+
+Start at .5 and increase distance between group A and group B beta distributions means by .005 starting at .005. Only 10% of data is zero-one inflated.
+
+```{r}
+meanDifferences <- seq(from=.005,to=.25,by=.005)
+library(parallel)
+cl <- makeCluster(detectCores())
+powDf <- mclapply(meanDifferences, 
+               function(x) 
+                 powerEst(n1=100, a1=.1, g1=.5, m1=(.50 + x/2), p1=10, m2=(.50 - x/2),iter=10000)
+               )
+powerCurveDf1 <- data.frame(d=unlist(lapply(powDf, function(x) mean(x[["d"]]) )),
+                           pow=unlist(lapply(powDf, function(x) 1-mean(x[["Miss"]]) )),
+                           type="Simulated"
+                             )
+powerCurveDf2 <- data.frame(d=unlist(lapply(powDf, function(x) mean(x[["d"]]) )),
+                           pow=unlist(lapply(powDf, function(x) mean(x[["empiricalPower"]]) )),
+                          type="Empirical"
+                           )
+powerCurveDf <- rbind(powerCurveDf1,powerCurveDf2)
+```
+
+------------------------------------------------------------------------
+
+Underpowered/less sensitive at lower mean differences, but as mean differences/effect size increases, normality assumption of t-test may matter less.
+
+```{r}
+ggplot(powerCurveDf, aes(x=d,y=pow,group=type,color=type)) + geom_line() + jtools::theme_apa() + ylab("Power") + xlab("Cohen's D")
+```
+
+------------------------------------------------------------------------
+
+### Increasing Differences in Zero-One Inflation and Normal-ish Beta Distribution
+
+Proportion of data that is either one or zero inflated set at 50% and proportion group A increasing one-inflated and group B increasingly zero-inflated. Small difference between beta distributions
+
+```{r}
+inflation <- seq(from=.1,to=.75,by=.025)
+cl <- makeCluster(detectCores())
+powDf <- mclapply(inflation, 
+               function(x) 
+                 powerEst
+               (n1=100, a1=.5, g1=x, m1=(.51), p1=10, m2=(.49),g2=1-x,iter=10000)
+               )
+powerCurveDf1 <- data.frame(d=unlist(lapply(powDf, function(x) mean(x[["d"]]) )),
+                           pow=unlist(lapply(powDf, function(x) 1-mean(x[["Miss"]]) )),
+                           type="Simulated"
+                             )
+powerCurveDf2 <- data.frame(d=unlist(lapply(powDf, function(x) mean(x[["d"]]) )),
+                           pow=unlist(lapply(powDf, function(x) mean(x[["empiricalPower"]]) )),
+                          type="Empirical"
+                           )
+powerCurveDf <- rbind(powerCurveDf1,powerCurveDf2)
+```
+
+------------------------------------------------------------------------
+
+Same deal
+
+```{r}
+ggplot(powerCurveDf, aes(x=d,y=pow,group=type,color=type)) + geom_line() + jtools::theme_apa() + ylab("Power") + xlab("Cohen's D")
+```
+
+------------------------------------------------------------------------
+
+### Skewed Distribution and Increasing Proportion of One's for Group A
+
+```{r}
+inflation <- seq(from=.1,to=.75,by=.025)
+cl <- makeCluster(detectCores())
+powDf <- mclapply(inflation, 
+               function(x) 
+                 powerEst(n1=100, a1=.5, g1=x, m1=.755, p1=10, m2=.765,g2=.1,iter=10000)
+               )
+powerCurveDf1 <- data.frame(d=unlist(lapply(powDf, function(x) mean(x[["d"]]) )),
+                           pow=unlist(lapply(powDf, function(x) 1-mean(x[["Miss"]]) )),
+                           type="Simulated"
+                             )
+powerCurveDf2 <- data.frame(d=unlist(lapply(powDf, function(x) mean(x[["d"]]) )),
+                           pow=unlist(lapply(powDf, function(x) mean(x[["empiricalPower"]]) )),
+                          type="Empirical"
+                           )
+powerCurveDf <- rbind(powerCurveDf1,powerCurveDf2)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+ggplot(powerCurveDf, aes(x=d,y=pow,group=type,color=type)) + geom_line() + jtools::theme_apa() + ylab("Power") + xlab("Cohen's D")
+```
+
+## Alternative Model: Zero-One-Inflated Beta Regression Model
+
+```{r}
+set.seed(20)
+groupA <- rzoib(n=100,alpha=.15,gamma=.72, mu=.53,phi=4)
+groupB <- rzoib(n=100,alpha=.15,gamma=.18,mu=.50,phi=4)
+simDf <- data.frame(DV=c(groupA,groupB),group=c(rep("A",100),rep("B",100)))
+
+zoib_model <- bf(
+  DV ~ group,
+  phi ~ group,
+  zoi ~ group,
+  coi ~ group, 
+  family = zero_one_inflated_beta()
+)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+ncores=detectCores()
+fit <- brm(
+  formula = zoib_model,
+  data = simDf,
+  file = "brm-zoib",
+  silent=2, refresh=0, cores=ncores, refresh=0
+)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+summary(fit)
+sexit(fit)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+ols <- lm(DV ~ group, data=simDf)
+summary(ols)
+
+```
+
+------------------------------------------------------------------------
+
+```{r}
+pp_check(fit)
+```
+
+## Issues with ZOIB: Ordered Beta Regression
+
+"The ZOIB has issues with overfitting the data by fitting multiple sets of parameters to degenerate (bounded) and continuous responses separately."
+
+Primary issue is it assumes the processes of 0, 1, and continuous beta are completely independent processes.
+
+![](images/Screen%20Shot%202022-10-17%20at%2012.35.00%20PM.png){width="534"}
+
+## Features of Ordered Beta Regression
+
+-   ordered cut points, similar in spirit to an ordered logit model, to estimate the joint probability of 0s (the lower bound), continuous proportions, and 1s (the upper bound) in bounded continuous data.
+
+-   As only one predictive model is used for all of the outcomes, the effect of covariates is identified across degenerate and continuous observations without resulting in overfitting.
+
+-   The use of cut points permits the model to fit distributions with mostly degenerate observations or no degenerate observations at all, which makes it a general solution to this problem.
+
+## Simulations from Paper
+
+![](images/Screen%20Shot%202022-10-17%20at%2012.49.55%20PM.png){width="484"}
+
+## Posterior Predictive Check from Paper
+
+![](images/Screen%20Shot%202022-10-17%20at%2012.51.59%20PM.png)
+
+## Implementing Ordered Beta Regression
+
+```{r}
+  ord_fit_mean <- ordbetareg(formula=DV ~ group, 
+                       data=simDf,
+                cores=2,chains=2,iter=1000,
+                refresh=0)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+summary(ord_fit_mean)
+```
+
+## Posterior Predictive Check
+
+```{r}
+pp_check(ord_fit_mean)
+```
+
+## With real data: OLS
+
+```{r}
+ols <- lm(outTherm ~ CSEid, data=indDiffs1)
+summary(ols)
+```
+
+------------------------------------------------------------------------
+
+### Check Model
+
+```{r}
+pp_check(ols)
+```
+
+## With real data: ZOIB
+
+```{r}
+zoib_model <- bf(
+    outTherm ~ CSEid,
+    phi ~ CSEid,
+    zoi ~ CSEid,
+    coi ~ CSEid, 
+    family = zero_one_inflated_beta()
+)
+ncores=detectCores()
+zoib.m <- brm(
+    formula = zoib_model,
+    data = indDiffs1,
+    silent=2, refresh=0, cores=ncores, refresh=0
+)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+summary(zoib.m)
+```
+
+------------------------------------------------------------------------
+
+### Check Model
+
+```{r}
+pp_check(fit)
+```
+
+## With real data: Ordered beta regression
+
+```{r}
+  obr <- ordbetareg(outTherm ~ CSEid, 
+                       data=indDiffs1,
+                cores=2,chains=2,iter=1000,
+                refresh=0)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+ summary(obr)
+```
+
+------------------------------------------------------------------------
+
+### Check model
+
+```{r}
+pp_check(obr)
+```

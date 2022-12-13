@@ -1,0 +1,57 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(foreach)
+library(doParallel)
+```
+
+```{r}
+parallel::detectCores()
+n.cores <- parallel::detectCores() - 1
+my.cluster <- parallel::makeCluster(
+  n.cores, 
+  type = "PSOCK"
+  )
+#register it to be used by %dopar%
+doParallel::registerDoParallel(cl = my.cluster)
+
+#check if it is registered (optional)
+foreach::getDoParRegistered()
+```
+
+
+```{r}
+ThreeWlist <- foreach(i = 1:500, .packages = c("psych", "Superpower", "Rmisc"))  %dopar% {
+  data.df <- sim.anova(es123=.15,n=50)  # one main effect and one interaction
+describe(data.df)
+pairs.panels(data.df)   #show how the design variables are orthogonal
+summary(lm(DV~IV1*IV2*IV3,data=data.df))
+simout <- Rmisc::summarySE(data=data.df, measurevar = "DV", groupvars=c("IV1","IV2","IV3"))
+design_result <- ANOVA_design(design = "2b*2b*2b", 
+                                                               #sample size per group
+                                                               n = 50, 
+                                                               mu = simout$DV, 
+                                                           sd = simout$sd
+                              )
+                               p_a <- plot_power(design_result,
+                                   max_n = 300,
+                                   plot = FALSE,
+                                   verbose = FALSE)
+                               p_a$power_df
+  }
+ThreeWlistNoNA <- Filter(Negate(is.null), ThreeWlist)
+colsList<-lapply(ThreeWlistNoNA, function(x) x[ncol(x)])
+result <- do.call("cbind", colsList)
+aggPower <- data.frame(N= ThreeWlist[[1]]$n, aggPower = rowMeans(result))
+```
+
+
+```{r}
+ggplot(aggPower, aes(x=N, y=aggPower)) + geom_line() + geom_hline(yintercept=80, linetype="dashed")
+```
+
+
+
