@@ -1,0 +1,235 @@
+---
+title: "NLP in R Part 5: Topic Modeling"
+output: html_document
+year: '2020'
+---
+
+In this last example, we'll explore another data driven method in NLP--topic modeling. Topic models are useful for discovering themes and hidden semantic structures within text. The stm package in R (Roberts, Stewart, & Tingley,2019) also makes it easy to see how the topics change over time or relate to other variables of interest. 
+
+---
+
+### Loading packages and Data
+
+You'll need the below packages for this example
+
+```{r packages, message=FALSE, warning=FALSE}
+
+library(quanteda)
+library(tidyverse)
+library(ggplot2)
+library(LDAvis)
+library(stm)
+
+```
+
+
+---
+**Load data Pre-Process**
+
+```{r , include=F}
+
+#To create this document we pre-loaded all of our model results
+setwd("C:/Users/cwpur/Dropbox/R NLP Tutorials/Part 5 Topic Modeling")
+covid_twts <- readRDS("covid_twts.rds")
+climate_twts <- readRDS("climate_twts.rds")
+sk_covid <- readRDS("searchK_covid_stm.rds")
+out_sk<-readRDS("out_sk.rds")
+twts_stm <- readRDS("twts_stm.rds")
+
+```
+
+```{r , eval=F}
+covid_twts <- readRDS("covid_twts.rds")
+climate_twts <- readRDS("climate_twts.rds")
+
+```
+
+For now, let's focus on covid data set
+
+```{r , message=FALSE, warning=FALSE}
+#create corpus with metadata
+corpus_twts<-bind_rows(climate_twts,covid_twts)%>%
+  mutate(Topic = c(rep("Climate",nrow(climate_twts)),rep("Covid",nrow(covid_twts))))%>%
+  filter(lang == "en" &            
+           is_retweet == FALSE)%>%
+  select(text,Topic,retweet_count,is_quote,followers_count)%>%
+  corpus(meta=list("Topic","retweet_count","followers_count"))
+```
+
+For pre-processing, it's especially important for topic modeling that we remove words that appear in few documents. We'll only include features that are in at least 10 documents.  
+
+Beyond that, we'll remove punctuation, urls, symbols, and numbers. We'll also lemmatize.
+
+
+```{r , message=FALSE, warning=FALSE}
+#pre-process and convert to dfm
+dfm_covid<-corpus_twts%>%
+  corpus_subset(Topic=="Covid")%>%
+  tokens(remove_punct=T,
+       remove_symbols=T,
+       remove_url=T,
+       remove_numbers=T)%>%
+  tokens_remove(pattern = stopwords())%>%
+  tokens_replace(pattern = lexicon::hash_lemmas$token,              
+                 replacement = lexicon::hash_lemmas$lemma)%>%
+  dfm()%>%
+  dfm_trim(min_docfreq=10)
+
+#convert to stm format
+out_covid <- convert(dfm_covid, to = "stm")
+```
+
+# Choosing the Number of Topics
+
+One of the most difficult parts of topic modeling is determing the the number of topics to extract. The stm package gives us a variety of tools to help us determine which number produces topics with the best balance of coherence (when the most probable words for a given topic tend to co-occur) and exclusivity (the topic has words unique to it). We'll try to maximize both when we select our model. 
+
+First, we'll estimate models with several different numbers of topics (the K argument below) and compare model quality. This will take a few minutes to run (especially if you decided to use a larger data set). You can also run fewer models by adjusting the values for K.
+
+```{r , eval=F}
+sk_covid<-searchK(out_covid$documents,out_covid$vocab, K=c(5,10,15,20,25,30,40))
+```
+Let's plot the results semantic coherence and exclusivivty
+
+```{r , message=FALSE, warning=FALSE}
+#create corpus with metadata
+apply(sk_covid$results, 2, unlist)%>%
+  as_tibble()%>%
+  mutate(K=as.factor(K))%>%
+  ggplot(aes(x=exclus, y=semcoh, colour = K)) + 
+  geom_point(size=3) + 
+  theme_minimal()
+```
+
+It looks like 10, 15 , and 20 topics are striking the best balance between coherence and exclusivity. It's worth noting that stm() includes several additional model diagnostic tools (see Roberts, Stewart, & Tingley, 2019 for more details). You can easily plot out residuals and hold-out liklihoods. 
+
+```{r , message=FALSE, warning=FALSE}
+plot(sk_covid)
+```
+
+Looking at a few more indicators, there is not a clear "right" number of targets. We'll choose 10 because it has a good balance of coherence and exclusivity and one of the better held-out likelihoods.
+
+```{r , include=FALSE}
+#estimate a 10 topic model (we've included the seed that will ensure you're results are the same as ours)
+
+covid_10<-stm(out_covid$documents, out_covid$vocab, data=out_covid$meta, K=10, seed = 2828434)
+
+```
+
+# Interpreting Topics
+
+Now that we have our topic model we can dig into the actual contents. Understanding what topics represent can sometimes be difficult. We'll start by looking at the words associated with each topic and then look at some example tweets that load highest on them.
+
+```{r , message=FALSE, warning=FALSE}
+#look at most representative words from each topic
+labelTopics(covid_10)
+```
+
+Looking at the top words from each topic alone, it can be difficult to discern what some topics are about. Still, there are some recognizeable themes. Topic 1 appears to be about lockdowns and social distancing, Topic 2 talks about uptades on covid cases and testing, Topics 3 and 9 both talk about wearing masks, Topic 4 is about Trump, and Topic 5 is about a South Park special that aired during the pandemic. 
+
+Let's look at some represntative tweets for these topics. 
+
+```{r , message=FALSE, warning=FALSE}
+findThoughts(covid_10, texts = corpus_twts[names(out_covid$documents)], n = 2, topics = 2)$docs[[1]]%>%
+  plotQuote(width = 60, main = "Topic 2: COVID-19 Cases Updates")
+
+findThoughts(covid_10, texts = corpus_twts[names(out_covid$documents)], n = 2, topics = c(3,9))$docs[[1]]%>%
+  plotQuote(width = 60, main = "Topic 3 and 9: Mask Wearing")
+
+```
+
+Some topics are more closley related to others. We can observe this by plotting them onto 2D space using the LDAvis package. These figures are also interactive. You can look out this topic model more closely by following the link below (note that creating a link for your own model will require a github account)
+
+```{r , eval=F}
+#generate lda visualization (opens up interactive plot in browser)
+toLDAvis(covid_10,out_covid$documents,open.browser=T,as.gist=T)
+
+```
+
+
+![COVID-19 Topic Model](https://mfr.osf.io/export?url=https://osf.io/v84tj/?direct%26mode=render%26action=download%26public_file=True&initialWidth=848&childId=mfrIframe&parentTitle=OSF+%7C+LDAvis.JPG&parentUrl=https://osf.io/v84tj/&format=2400x2400.jpeg)
+
+Copy and paste this link into your browser to see an interactive plot of the topics:
+
+https://bl.ocks.org/CurtisPuryear/raw/023d483edd67d02c7dd0cf0e88fa5bc2/#topic=1&lambda=0.6&term=
+
+
+# Topical Covariates
+
+One of the main advantages the stm package has over other topic models is that it can estimate the relationships between metadata and topics. Stm accepts two types of covariates. Topical prevalence covariates examine the relationships between meta-data and the presence topics in documents. Topical content covariates examine how the meta-data predicts differences in the words that compose the topics themselves. 
+
+Let's see how Twitter meta-data (like number of followers and retweets) affects the prevalence and content of our topics. This time, we'll estimate a topic model that includes both our climate and covid tweets.
+
+```{r , message=FALSE, warning=FALSE}
+#let's enter both corpora this time and see what happens
+dfm<-corpus_twts%>%
+  tokens(remove_punct=T,
+       remove_symbols=T,
+       remove_url=T,
+       remove_numbers=T)%>%
+  tokens_remove(pattern = stopwords())%>%
+  tokens_replace(pattern = lexicon::hash_lemmas$token,              
+                 replacement = lexicon::hash_lemmas$lemma)%>%
+  dfm()%>%
+  dfm_trim(min_docfreq=10)
+
+#convert to stm format
+out <- convert(dfm, to = "stm")
+```
+
+```{r , eval=F}
+#estimate models
+out_sk<-searchK(out$documents,out$vocab, prevalence =~ followers_count + retweet_count, data = out$meta, K=c(5,10,15,20,25,30,40))
+```
+
+```{r , message=FALSE, warning=FALSE}
+
+#plot model diagnostics
+apply(out_sk$results, 2, unlist)%>%
+  as_tibble()%>%
+  mutate(K=as.factor(K))%>%
+  ggplot(aes(x=exclus, y=semcoh, colour = K)) + 
+  geom_point(size=3) + 
+  theme_minimal()
+
+plot(out_sk)
+
+```
+
+Looking at everything, 15 topics seems to be the winner
+
+```{r , eval=FALSE}
+#choose model
+twts_stm<-stm(out$documents,out$vocab, prevalence =~ followers_count + retweet_count, data = out$meta, K=15, seed = 2505146)
+```
+
+```{r , message=FALSE, warning=FALSE}
+#inspect topics
+plot(twts_stm, type = "summary", xlim = c(0, 0.3), method="difference")
+```
+
+```{r ,  message=FALSE, warning=FALSE}
+ef<-estimateEffect(1:15 ~ followers_count+retweet_count, twts_stm, out$meta)
+
+
+plot.estimateEffect(ef, model = twts_stm,covariate = "followers_count",type = "summary", 
+                    xlim = c(-.3, 0.3), method="difference",cov.value1 = 100, cov.value2=1000000, verbose.labels =F,
+                    main="Estimated Prevalence at 100 Followers Minus Prevalence at 1M Followers")
+```
+
+Topic 12 is slighlty more prevelant among accounts with a larger following
+
+``` {r ,  message=FALSE, warning=FALSE}
+findThoughts(twts_stm, texts = corpus_twts[names(out$documents)], n = 1, topics = 12)$docs[[1]]%>%
+  plotQuote(width = 30, main = "Topic 12: Most Representative Tweet")
+
+```
+
+It looks like a news headline. Looking at the topic, "Trump" and "Say" are two of the defining words. It's possible that this topic has picked up on news quoting Trump, which might explain why the accounts that tweet about this topic tend to have larger followings. 
+
+# Conclusions and Moving Forward
+
+We hope this guide has provided a glimpse into the diverse tools and data sets available for language analyses in R. We recommend applying word embeddings and topic modeling to data sets that interest you as you familiarize yourself with them. 
+
+Note that We have not discussed supervised classifiers in these tutorials (such as those you might use to classify text or images). R has packages for a wide range of supervised learning algorithms, including random forests (https://cran.r-project.org/web/packages/randomForest/index.html), naive bayes and SVM ((https://cran.r-project.org/web/packages/e1071/index.html) and neural networks (https://keras.rstudio.com/). For langauge processing, neural networks often perform well. One type of recurrent neural network called Long Short Term Memory is especially common in natural langauge processing. Two of the most comprehensive libraries for training neural networks, PyTorch and TensorFlow, are both in Python. However, if you wish to keep working in R, there is an interface fo Keras and Tensorflow (call kerasr) which allows you to use these libraries from R studio. This requires a python installation. We have also uploaded an example r script for training a neural network in keras. However, for details on how to get started, we recommend visiting the kerasr website (kerasr). For further reading on training neural networks in R, Deep Learning with R by Chollet and Allaire is a great place to start. 
+
+

@@ -1,0 +1,204 @@
+---
+title: 'NLP in R Part 1: Data Acquisition and R Basics'
+year: '2020'
+output: html_document
+---
+
+---
+
+This code provides an introduction to acquiring large corpora of social media texts from online repositories and to interacting with some of R's data structures for text. We will work with two different publicly accessible repositories of Tweet ids, one with tweets related to COVID-19 and another related to climate change. We will work with a subset of these data sets to make the examples more accessible even with limited computing resources. The data in their entirety can be found at the links below. 
+
+Climate Change Tweet IDs: https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/5QCCUU 
+
+COVID-19 Tweet IDs: https://catalog.docnow.io/datasets/20200319-covid-19/
+
+<br>
+
+---
+
+### Accessing Twitter Data
+
+Interacting with the Twitter API is made incredibly simple by the rtweet package. All you need is a Twitter account to get started. When you run the first line of code that makes a request to the Twitter access programming interface (API), a window will appear in your browser asking you to approve the application. You will then be ready to collect data from Twitter. For more details you can visit the webpage for rtweet at https://cran.r-project.org/web/packages/rtweet/readme/README.html 
+
+### Loading packages
+
+You'll need the below packages for this tutorial
+
+```{r packages, message=FALSE, warning=FALSE}
+
+library(quanteda)
+library(tidyverse)
+library(readr)
+library(rtweet)
+```
+
+---
+
+### Data Acquisition
+
+For this example, we will download two sets of Tweet IDs, one related to climate change and the other related to COVID-19. We'll then use Twitter's API to collect the full information about each tweet (a process sometimes referred to as "hydration").
+
+Note that because of Twitter's terms of service, we are only permitted to share Tweet ID numbers. We cannot share the full tweets. Thus, collecting the data used in this examples has two parts, 1) acquiring a set of Tweet ID numbers and 2) passing those IDs through the Twitter API to collect the complete Tweet data. 
+
+We have uploaded the Tweet IDs used in these examples to our OSF page (https://osf.io/hvcg3/). We have also posted links to larger databases of Tweet IDs above. 
+
+First, let's import the Tweet IDs from our OSF. 
+
+```{r , eval=FALSE}
+covid_ids <- read_lines("https://files.osf.io/v1/resources/hvcg3/providers/osfstorage/5fa98fd4d1894f017668b04c?action=download&direct&version=1")
+
+climate_ids <- read_lines("https://files.osf.io/v1/resources/hvcg3/providers/osfstorage/5fa98fd5d1894f017c68bdfd?action=download&direct&version=1")
+```
+
+Next, we will use the rtweet package to "hydrate" the Tweet IDs. Note that each line below will take a few minutes. This is primarily due to the "parsing" step, which turns the data from each tweet into an easy to analyze data frame. If you ever want to download a lot of tweets quickly and parse them later, you can change the value of the parse argument to "FALSE". 
+
+To speed up the code, we've set it to only import the first 10000 tweets, but feel free to raise the second number in brackets to download more (each file has 45000 tweet ids in it)
+
+```{r , eval=FALSE}
+covid_twts<-lookup_statuses(covid_ids[1:10000], parse = TRUE)
+climate_twts<-lookup_statuses(climate_ids[1:10000], parse = TRUE)
+```
+
+Since that took a few minutes, lets save these data frames to our working directory before moving on. We've commented out this part of the script to help protect against accidentally overwriting data files. To save these dataframes, just uncomment the lines of code, and then re-comment them after you've completed the operation. 
+
+```{r , eval=FALSE}
+#saveRDS(covid_twts, "covid_twts.rds")
+#saveRDS(climate_twts, "climate_twts.rds")
+```
+
+ 
+```{r data, include=FALSE,message=FALSE, warning=FALSE}
+#We already have our tweets saved in our working directory, so we read those in from our working directory here
+#If you want this rmd file to knit correctly, change the path in the setwd function to where you have saved your tweets.
+setwd("C:/Users/cwpur/Dropbox/R NLP Tutorials")
+climate_twts <- readRDS("climate_twts.rds")
+covid_twts <- readRDS("covid_twts.rds")
+```
+
+Our query returned 6990 climate change tweets and 9479 covid tweets, each with 90 variables. The exact number of tweets returned by the API may differ when you run this because some of the tweets will be deleted over time. The 90 variables contain the text of the tweet itself and a wide range of metadata (e.g., number of likes, whether the tweet is a retweet, the name of the account being retweeted). Let's take a look at all of the different variables included with our Twitter data 
+
+```{r , message=FALSE, warning=FALSE}
+names(covid_twts)
+```
+
+---
+### Data Structures for Text
+
+R offers a wide range of packages for working with large text corpuses. Here we'll use the Quanteda package to go over some objects that are useful for storing text, how to manipulate them, and how to perform some basic tasks like storing metadata, tokenization, and converting to document feature matrices. We've chosen the Quanteda package because it's intuitive, feature-rich, and has additional, easy to follow, tutorials on their website if you are interested in learning more (https://quanteda.io/).
+
+**Corpus Objects**
+
+You can think of a corpus as a place for storing the original version of your text. You probably won't use these objects to run analyses or clean your data. Instead, corpuses are useful objects for storing static copies of your text along with some meta-data. Let's create two corpuses, one for each of our Twitter data-sets.
+
+```{r , message=FALSE, warning=FALSE}
+#Create corpus objects for both Twitter data sets
+climate_corpus<-corpus(climate_twts$text)
+covid_corpus<-corpus(covid_twts$text)
+
+#look at the first 10 tweets in the climate corpus
+summary(climate_corpus, n =10)
+```
+
+
+We see that the corpus objects already have information for the number of tokens, sentences, and unique tokens (types) for each tweet. We can add more meta-data if we want. Let's add the time and language of each tweet.
+
+
+```{r , message=TRUE, warning=FALSE}
+#add time of tweet as meta-data
+docvars(climate_corpus,"Date_Time")<-climate_twts$created_at
+docvars(covid_corpus,"Date_Time")<-covid_twts$created_at
+
+#add language
+docvars(climate_corpus,"lang")<-climate_twts$lang
+docvars(covid_corpus,"lang")<-covid_twts$lang
+
+#inspect climate corpus
+summary(climate_corpus, n =10)
+```
+
+The Quanteda website has many more examples for working with corpus objects (https://quanteda.io/articles/quickstart.html). We've applied several useful functions to our tweet corpora below.
+
+**Combining Corpora**
+
+Below we combine our two corpora into a single corpus that labels which data-set each tweet came from.
+
+```{r , message=TRUE, warning=FALSE}
+#add metadata to label which dataset each tweet came from
+docvars(climate_corpus,"Topic")<- "Climate"
+docvars(covid_corpus,"Topic") <- "Covid"
+
+#we'll also need to rename the documents to avoid duplicates
+names(climate_corpus)<-paste0("climate_", names(climate_corpus))
+names(covid_corpus)<-paste0("covid_", names(covid_corpus))
+
+#combine corpora
+combined_corpus<-covid_corpus + climate_corpus
+
+#inspect
+summary(combined_corpus, n =10)
+```
+
+**Filtering Corpus Based on Metadata**
+
+We can also extract a subset of our corpus using the meta-data we've added. Let's filter based on time and langauge
+
+```{r , include=FALSE}
+#Subset English tweets and store in a new object
+corpus_en<-corpus_subset(combined_corpus, lang=="en")
+
+#with a little extra code to format time, we can also pull out tweets that happened after Oct 1st of this year
+corpus_Oct2020<-corpus_subset(combined_corpus, Date_Time > as.POSIXct("2020-10-01 00:00", tz = "UTC"))
+```
+
+**Looking at words in context**
+
+Many tools for natural language processing look at which words tend to occur together. We can use the kwic function in Quanteda to quickly look at the context around keywords and phrases in our corpus. Let's look at the context of the word "harm" in our two corpuses. 
+
+```{r , message=FALSE, warning=FALSE}
+#context of "harm" in English covid tweets
+corpus_subset(corpus_en, Topic == "Covid")%>%
+  kwic(pattern = "harm",valuetype = "regex")%>%
+  slice(n=c(1:5))
+```
+```{r , message=FALSE, warning=FALSE}
+#context of "harm" in English covid tweets
+corpus_subset(corpus_en, Topic == "Climate")%>%
+  kwic(pattern = "harm",valuetype = "regex")%>%
+  slice(n=c(1:5))
+```
+Notice that our code also caught words that contain the string "harm" (e.g., pharmaceutical and charm). We can change the "valuetype" argument to be more strict.
+
+```{r , message=TRUE, warning=FALSE}
+corpus_subset(corpus_en, Topic == "Covid")%>%
+  kwic(pattern = "harm",valuetype = "glob")
+```
+```{r , message=TRUE, warning=FALSE}
+corpus_subset(corpus_en, Topic == "Climate")%>%
+  kwic(pattern = "harm",valuetype = "glob")
+```
+### Tokenization and Document Feature Matrices
+
+Corpora are useful for storing large bodies of text along with meta-data. But we need to take a few more steps before our text is ready for analyses.
+
+We will first separate our text into "tokens," which here correspond to individual words, but Quanteda can also tokenize text into characters and sentences using the "what" argument from the tokens function.
+
+```{r , message=FALSE, warning=FALSE}
+#tokenize words
+tokens<-tokens(corpus_en)
+head(tokens, 3)
+
+#tokenize sentences
+tokens_sent<-tokens(corpus_en, what = "sentence")
+head(tokens_sent, 3)
+```
+
+The tokens() function has separated each of our tweets into a vector of tokens. However, for many analyses we'll need to create a something called a document-feature matrix. In a document-feature matrix, every row is a document and each column is a "feature" (e.g., a word). The cells contain the number of times each feature occurs within each document. The dfm() function will turn our corpus into a document feature matrix, and will also tokenizes our documents along the the way.
+
+```{r , message=FALSE, warning=FALSE}
+dfm<-dfm(corpus_en)
+head(dfm)
+
+```
+
+That's it for Part 1 of this tutorial. So far we've collected thousands of tweets using Twitters API, and practiced using two useful data structures for text data-corpora and document-feature matrices. In Part 2, we'll explain how to prepare this data for analyses and perform some basic langauge analyses. 
+

@@ -1,0 +1,243 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(data.table)
+library(readr)
+library(stringr)
+library(knitr)
+library(gplots)
+library(FNN)
+library(lsa)
+```
+
+
+```{r}
+vectors <- fread('~/Downloads/glove.6B/glove.6B.300d.txt', data.table = F,  encoding = 'UTF-8') 
+colnames(vectors) = c('word',paste('dim',1:300,sep = '_'))
+rownames(vectors) <- vectors$word
+vectors <- vectors[,-1]
+vectors <- as.matrix(vectors)
+```
+
+
+```{r}
+get_cosine_matrix <- function(x) {
+        vectors[x,] %>%
+                t %>%
+                cosine
+}
+
+print_cosine_matrix <- function(x) {
+        get_cosine_matrix(x) %>%
+                kable(digits = 2)
+}
+
+cosine_matrix_heatmap <- function(x) {
+        get_cosine_matrix(x) %>%
+                heatmap.2(col = cm.colors)
+}
+
+c("juan", "tim", "intelligent", "carlos", "dylan") %>% print_cosine_matrix
+```
+
+```{r}
+get_cosine_matrix_two <- function(x,y) {
+  output<-vectors[c(x,y),] %>% t %>% cosine 
+  output <- output[rownames(output) %in% x, !(colnames(output) %in% x)]
+  return(output)
+}
+
+print_cosine_matrix_two <- function(x,y) {
+        get_cosine_matrix_two(x,y) %>%
+                kable(digits = 2)
+}
+
+cosine_matrix_heatmap_two <- function(x,y) {
+        get_cosine_matrix_two(x) %>%
+                heatmap.2(col = cm.colors)
+}
+get_cosine_matrix_two(x=c("orange","yellow","red"),y=c("peanut","walnut","nut","fruit"))
+print_cosine_matrix_two(x=c("orange","yellow","red"),y=c("peanut","walnut","nut","fruit"))
+```
+
+
+```{r}
+maleWords <- c("he", "son", "his", "him", "father", "man", "boy", "himself", "male", "brother", "sons", "fathers", "men", "boys", "males", "brothers", "uncle", "uncles", "nephew", "nephews")
+
+femaleWords <- c("she", "daughter", "hers", "her", "mother", "woman", "girl", 
+"herself", "female", "sister", "daughters", "mothers", "women", 
+"girls", "femen", "sisters", "aunt", "aunts", "niece", "nieces"
+)
+
+intelligentWords <- c("mathematical","motivated","accomplished","analytical","quantitative")
+caringWords <- c("compassionate","sweet","caring","concerned","worried")
+```
+
+```{r}
+colMeans(get_cosine_matrix_two(x=femaleWords, y=caringWords)) - colMeans(get_cosine_matrix_two(x=maleWords, y=caringWords))
+
+colMeans(get_cosine_matrix_two(x=femaleWords, y=intelligentWords)) - colMeans(get_cosine_matrix_two(x=maleWords, y=intelligentWords))
+```
+
+
+
+```{r}
+get_closest <- function(x, k = 10){
+        knns <- get.knnx(vectors, t(x), k = k)
+        data.frame(words = terms[knns$nn.index],
+                   dist = as.vector(knns$nn.dist))
+}
+
+
+print_closest <- function(x, ...) {
+        get_closest(vectors[x,]) %>%
+                kable(caption = str_c(x, ": Most similar words"))
+}
+
+
+
+# find closest words
+"latino" %>% print_closest
+```
+
+```{r}
+( vectors["latino",] - vectors["caucasian",] ) %>% get_closest(k=50) %>% kable
+```
+
+
+```{r}
+( vectors["mexican",] - vectors["italian",] ) %>% get_closest(k=50) %>% kable
+```
+
+```{r}
+normTraits <- read.csv("~/Google Drive/Volumes/Research Project/Identities to Traits/Study 2/Cleaning/Output/Normative/normativeDfStudy12.csv", header = T)
+```
+
+```{r}
+present <- tolower(normTraits$traits[which(tolower(normTraits$traits) %in% rownames(vectors))])
+
+sort ( colMeans( get_cosine_matrix_two(x=femaleWords, y=present) - get_cosine_matrix_two(x=maleWords, y=present) ) )
+
+femaleTraits <- colMeans( get_cosine_matrix_two(x=femaleWords, y=present))
+genderTraits <- t(get_cosine_matrix_two(x=c("female","male"), y=present))
+cor.test( normTraits$Female[tolower(normTraits$traits) %in% tolower(rownames(vectors))],femaleTraits )
+
+# Plot MDS
+ggscatter(as.data.frame(genderTraits), x = "male", y = "female",
+          label = rownames(genderTraits),
+          size = 1,
+          repel = TRUE)
+```
+
+```{r}
+longDf <- read.csv("/Volumes/GoogleDrive/My Drive/Volumes/Research Project/Metacognition/Study 1/input/confClean.csv")
+
+posTraits <- read.csv("~/Google Drive/Volumes/Research Project/Trait Network_Behaviral/generating network/output/allPosCents.csv")
+
+negTraits <- read.csv("~/Google Drive/Volumes/Research Project/Trait Network_Behaviral/generating network/output/allNegCents.csv")
+
+rawDf <- read.csv("/Volumes/GoogleDrive/My Drive/Volumes/Research Project/Metacognition/Study 1/input/confRaw.csv")
+rawDf <- rawDf %>% rename(subID = id)
+```
+
+
+```{r}
+traits <- rbind(posTraits, negTraits)
+present <- tolower(traits$trait[which(tolower(traits$trait) %in% rownames(vectors))])
+
+genderTraits <- t(get_cosine_matrix_two(x=c("female","male"), y=present))
+
+genderTraits <- data.table::setDT(as.data.frame(genderTraits), keep.rownames = TRUE)
+colnames(genderTraits)[1] <- "trait"
+genderTraits$trait <- stringr::str_to_title(genderTraits$trait)
+longDf <- merge(longDf, genderTraits, by.x="traits",by.y="trait")
+```
+
+
+```{r}
+rawDf$D2 <- as.factor(rawDf$D2)
+rawDf$D2 <- recode_factor(rawDf$D2, "1" = "CisMale",
+                                "2" = "CisFemale",
+              "3" = "NonBin",
+              "4" = "TransMale",
+              "5" = "TransFemale",
+              "6" = "Other"
+              )
+
+longDf <- merge(longDf, rawDf[c("subID","D2")], by = "subID")
+
+longDf$inGminOutG <- ifelse(longDf$D2=="CisMale"|longDf$D2=="TransMale",longDf$male-longDf$female,
+       ifelse(longDf$D2=="CisFemale"|longDf$D2=="TransFemale",longDf$female-longDf$male, NA))
+```
+
+
+```{r}
+m<-lmer(scale(eval) ~ D2 * inGminOutG + ( inGminOutG | subID ) + ( 1 | traits), data=longDf)
+summary(m)
+ggpredict(m, c("inGminOutG","D2")) %>% plot()
+```
+
+```{r}
+m<-lmer(scale(eval) ~ D2 * inGminOutG * scale(confidence) + ( inGminOutG + scale(confidence) | subID ) + ( 1 | traits), data=longDf)
+summary(m)
+ggpredict(m, c("inGminOutG","D2","confidence")) %>% plot()
+```
+
+```{r}
+latinoTraits <- t(get_cosine_matrix_two(x=c("latino","hispanic","caucasian","white","juan"), y=present))
+
+latinoTraits <- data.table::setDT(as.data.frame(latinoTraits), keep.rownames = TRUE)
+colnames(latinoTraits)[1] <- "trait"
+latinoTraits$trait <- stringr::str_to_title(latinoTraits$trait)
+longDf <- merge(longDf, latinoTraits, by.x="traits",by.y="trait")
+
+rawDf$ynlatino <- 0
+rawDf$ynlatino[grep("4",rawDf$D3)] <- 1
+
+longDf <- merge(longDf, rawDf[c("subID","ynlatino")], by = "subID")
+
+```
+
+```{r}
+m<-lmer(scale(eval) ~ juan * as.factor(ynlatino) + ( 1 | subID ) + ( 1 | traits), data=longDf)
+summary(m)
+ggpredict(m, c("juan","ynlatino")) %>% plot()
+```
+
+
+
+```{r}
+asianTraits <- t(get_cosine_matrix_two(x=c("asian","chinese","japanese"), y=present))
+
+asianTraits <- data.table::setDT(as.data.frame(asianTraits), keep.rownames = TRUE)
+colnames(asianTraits)[1] <- "trait"
+asianTraits$trait <- stringr::str_to_title(asianTraits$trait)
+longDf <- merge(longDf, asianTraits, by.x="traits",by.y="trait")
+
+rawDf$ynasian <- 0
+rawDf$ynasian[grep("2",rawDf$D3)] <- 1
+
+longDf <- merge(longDf, rawDf[c("subID","ynasian")], by = "subID")
+```
+
+```{r}
+m<-lmer(scale(eval) ~ asian * as.factor(ynasian) + ( 1 | subID ) + ( 1 | traits), data=longDf)
+summary(m)
+ggpredict(m, c("asian","ynasian")) %>% plot()
+```
+
+
+```{r}
+fullLong <- read.csv("/Volumes/Research Project/Trait_TestRetest/WeekTRT/output/longChangeInds.csv", header = T)
+```
+
+
+
+
+
+
+
+

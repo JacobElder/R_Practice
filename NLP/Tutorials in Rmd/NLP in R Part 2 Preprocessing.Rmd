@@ -1,0 +1,398 @@
+---
+title: "NLP in R Part 2: Preprocessing, Word-Document Frequencies and Co-occurences"
+output: html_document
+year: '2020'
+---
+
+```{r data, include=FALSE,message=FALSE, warning=FALSE}
+setwd("C:/Users/cwpur/Dropbox/R NLP Tutorials")
+climate <- readRDS("climate_twts.rds")
+covid<- readRDS("covid_twts.rds")
+```
+---
+
+We left off after having just finished tokenizing and creating a document-feature matrix of the tweets we collected using Twitter's API. In part 2, we'll cover some common steps prior to analyses, take a look at how they affect our data, and then introduce tools for exploring the relationships between words within and between documents. 
+
+<br>
+
+---
+
+### Loading packages and Data
+
+You'll need the below packages for this introduction
+
+```{r packages, message=FALSE, warning=FALSE}
+
+library(quanteda)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(rwhatsapp)
+
+```
+
+---
+
+Be sure to load the data we collected in part 1 back into your R environment.
+
+```{r , eval=FALSE}
+climate <- readRDS("climate_twts.rds")
+covid<- readRDS("covid_twts.rds")
+```
+
+Let's take a peek at the most common words in each of our data sets. First, if you've viewed the data-frame of tweets, you may have noticed that some texts appear to be duplicates. You can see this easily sorting the data-frame by the text coloumn. 
+
+```{r , message=FALSE, warning=FALSE}
+arrange(climate,text)%>%
+  select(text)%>%
+  head()
+```
+
+In most cases, these repeat tweets are retweets (cases where one user has shared the status of another). The Twitter API treats each retweet as an individual case, complete with metadeta about both the retweeter and the original tweeter. This can be useful for some research questions, but for now, we will exclude retweets. Note that most tweets are retweets so this reduces the sample size substantially.
+```{r , message=FALSE, warning=FALSE}
+#remove non-english tweets and retweets. 
+#We also use the unlist() function to turn our tweets into character vector to be compatible with dfm()
+twts_climate<-climate%>%
+  filter(lang == "en" &            #remove non-english tweets 
+         is_retweet == FALSE)%>%   #remove retweets  
+  select(text)%>%                  #subset the column with the tweet text
+  unlist()                         #turn into a character vector
+  
+  
+twts_covid<-covid%>%
+  filter(lang == "en" &            
+         is_retweet == FALSE)%>%   
+  select(text)%>%                  
+  unlist()                         
+
+#conver to dfm
+dfm_climate<-dfm(twts_climate)
+dfm_covid<-dfm(twts_covid)
+
+#Look at top 10 most frequent tokens in each corpus
+topfeatures(dfm_climate, 10)
+topfeatures(dfm_covid, 10)
+
+```
+You'll notice that the most frequent tokens almost entirely comprise of articles and prepositions. Sometimes words of this type (sometimes called stopwords or function words) can be informative. But for many anlayses, researchers may remove some of these words because they add noise to their analytic approach. Removing stopwords, along with other text cleaning researchers do prior to analyses, is called pre-processing.
+
+
+### Pre-Processesing
+
+Decisions about how exaclty to pre-process should be informed by your research question and your analytic approach. For some applications of natural langauge processing, words like "they", "us" and "your" might be mostly noise. But the types of pronouns people use can also reveal things like analytic versus narrative styles of thought (Jordan, Sterling, Pennebaker, & Boyd, 2019). However, in many approaches that treat documents like "bags of words" (meaning the order of words in a document is ignored), including stopwords may not improve your model. But other, more complex models may take these words into account to better extract meaning. In short, knowing exactly what type of information to remove from your text prior to analyses depends upon your research question and the model you are building. 
+
+Here, we'll intoduce several steps common to pre-processing and some steps that are relevant to cleaning Twitter data. 
+
+**Pre-processing in Base R**
+
+In general, it is always better to seek out a package that accomplishes what you need before resorting to writing your own code for matching patterns in text. That being said, there are some situations where a quick "gsub()" function will save time. This specific function accepts a pattern, replacement, and the original string. Patterns are written using something called "regular expressions", the syntax for which can be confusing. Still, they are flexible and may save you time on occasion. Just be mindful of the order that you clean your text (e.g., removing with slashes prior to removing URLs will likely cause URLs to not be completely removed)
+
+Here is one example of a gsub() that will remove the possessive form from words in the dataset (which we'll use going forward), and a longer function that implements a number of commmon pre-processing steps. 
+
+```{r , message=TRUE, warning=FALSE}
+#tokenize without cleaning
+twts_climate<-gsub(pattern ="'s",replacement = "", twts_climate)
+twts_covid<-gsub(pattern ="'s",replacement = "", twts_covid)
+
+#here is an example of a function, written using regular expressions and gsub to clean tweets
+clean_text = function(x){
+  x = gsub("[^\x01-\x7F]", "", x)          #remove non ASCII (emojis)
+  x = gsub('http.*','',x)                  #remove urls
+  x = tolower(x)                           #everything to lower case
+  x = gsub("@\\w+", '<user>', x)           #replace mentions with "<user>"
+  x = gsub("#\\w+", "", x)                 #remove hashtags
+  x = gsub("/", " ", x)                    #replace forward slash with space
+  x = gsub("'s", "",x)                     #remove possessive form
+  x = gsub("[^-[:^punct:]]", "", x,perl=T) #remove punctuation except for hypen
+  x = gsub('[0-9]+', '<number>', x)        #replace numbers with "<NUMBER>"
+  X = gsub("-"," ",x)                      #split hyphenated words
+  x = gsub("\r?\n|\r", " ", x)             #replace line breaks with a space
+  x = gsub("\\s+"," ",x)                   #remove repeated spaces
+  x = gsub("^ ", "", x)                    # remove blank spaces at the beginning
+  x = gsub(" $", "", x)                    # remove blank spaces at the end
+}
+
+#look at an example of tweet cleaned with the above function
+twts_climate[[2]]
+print(clean_text(twts_climate[[2]]))
+
+
+```
+
+**Pre-processing Tools in Quanteda's Tokenizer**
+
+If the syntax for regular expressions looked confusing, luckily, a number of R packages accomplish the same with much more intuitive code. The tokens() function comes with several tools for pre-prepocessing. Note that all of these arguments can be included in the dfm() function as well. 
+
+```{r , message=TRUE, warning=FALSE}
+#first, lets combine our two datasets so we don't have to run every function twice
+corpus_climate<-corpus(twts_climate)
+corpus_covid<-corpus(twts_covid)
+docvars(corpus_climate,"Topic")<- "Climate"
+docvars(corpus_covid,"Topic") <- "Covid"
+names(corpus_climate)<-paste0("climate_", names(corpus_climate))
+names(corpus_covid)<-paste0("covid_", names(corpus_covid))
+corpus_twts<-corpus_climate+corpus_covid
+
+#tokenize without cleaning
+tokens<-tokens(corpus_twts)
+
+#tokenize and clean
+tokens_clean<-tokens(corpus_twts,
+  remove_punct=TRUE,      #remove Unicode punctuation
+  remove_symbols=TRUE,    #remove Unicode Symbols
+  remove_numbers=FALSE,   #removes tokens that are entirely numeric, but keeps tokens that start with digits   
+  remove_url=TRUE,        #remove tokens beginning with http
+  remove_separators=TRUE, #removes unicode separators (e.g., spaces)
+  split_hyphens=TRUE,     #turns hyphenated words into two tokens
+)
+
+#look at the tokens from the first tweet before and after cleaning
+tokens[[1]]
+tokens_clean[[1]]
+
+```
+
+**Removing and Replacing Lists of Tokens**
+
+Just like we asked, the tokens() function removed the punctuation and a URL from this tweet's tokens. We still have to decide whether or not to remove stopwords and how to treat hashtags. We can use a list stopwords in the Quanteda package to remove them. We'll keep hashtags in our data set for now, but we've included the code to accomplish this as well. 
+
+```{r , message=FALSE, warning=FALSE}
+tokens_pruned<-tokens_select(tokens_clean,     #call function to prune tokens
+              pattern=stopwords(),             #tell the pattern argument to remove Quantedas list of stopwords 
+              selection = "remove",            #indicate we want to remove tokens that match the above patterns
+              min_nchar = 3,                   #exclude tokens shorter than 3 characters
+              case_insensitive = TRUE)         #ignore case when matching patterns
+
+#tokens_pruned<-tokens_select(tokens_clean,                    
+#              pattern="#*",                            
+#              selection = "remove")
+
+#Look at the first tweet again
+tokens_pruned[[1]]
+```
+
+On Twitter, users also frequently tag one another. For this reason, you'll come across many tweets that mention other users with the "@"symbol. Say we don't care about the specific individual who is mentioned in a text, but we do care about whether the tweet contains a mention. To do this, we can replace all tokens that begin with the "@" symbol with the same token, "<user>". We'll also replace numbers with the string "<number>"
+
+**Twitter Specific Obstacles**
+
+```{r , message=FALSE, warning=FALSE}
+#first, lets find a tweet that mentions another user. 
+#We'll use the kwic fucntion to find the first tweet that mentions another user
+kwic(tokens_pruned, "@*")[1,]
+
+#now let's replace mentions with the token "<user>"
+tokens_pruned<-tokens_pruned%>%
+  tokens_replace(pattern = "@*",                  #match tokens starting with "@"
+                 replacement = "<user>")%>%       #replace with "<user>"
+  tokens_replace(pattern = "[0-9]+",              #match numbers
+                 replacement = "<number>",        #replace with "<number>"
+                 valuetype="regex")               #we'll change to "regex" so we can reuse our regular expression
+
+#check to see if it worked
+kwic(tokens_pruned, "<user>")[1,]
+```
+
+**Dealing with Emojis**
+
+It's never a bad idea to look through a larger subset of your data to make sure you haven't missed anything or inadvertently created a nonsensical goop of character strings. 
+
+```{r , message=FALSE, warning=FALSE}
+#first, we'll change some of the options in Quanteda to make it easier to view more data at once
+quanteda_options(print_tokens_max_ntoken = 50,
+                 print_tokens_max_ndoc = 30)
+ 
+#Randomly samples 3 the tokens from 3 documents (change the values of size to increase)
+tokens_sample(tokens_pruned,size=3)
+
+ 
+```
+
+Looking through a longer list of documents, we notice a tweet with some odd looking text. 
+
+```{r , message=FALSE, warning=FALSE}
+tokens_pruned[[551]]
+ 
+```
+
+Some of the above strings represent emojis, which present another obstacle for us. We could remove them like we have other parts of speech. We can do this easily with the list of emojis included with the "rwhatsapp" package
+
+```{r , message=FALSE, warning=FALSE}
+tokens_remove(tokens_pruned[551],
+              pattern = emojis$emoji)   #"emojis" is a tibble containing descriptions of 4085 emojis
+ 
+```
+
+We could remove emojis from our entire data set in this fashion. However, emojis signal important social informatioon. Keeping them could help us understand the sentiment expressed in these tweets. We could search for a lexicon of emojis that includes scores for polarity or sentiment. However, some of this information is already present in the names of the emojis. For example, 6 of the smiling emojis have the following names...
+
+```{r , message=FALSE, warning=FALSE}
+head(emojis$name)
+
+```
+
+For this example, we'll replace emojis with their names. While this isn't a perfect strategy, others have found that using descriptions of emojis in this fashion can improve sentiment analyses (Fernandez-Gavilanes, et al., 2018). 
+
+More recent emojis incorporate things like skin tone and hair type. This produces some additional text in the names of emojis. For example, for the emoji named, "family: woman, boy, boy", we'll remove all the text except for "family. Fortunately, each of these longer descrptions follow a colon for the emojis in our dataframe. This makes it easy to remove them.
+
+```{r , message=FALSE, warning=FALSE}
+#we'll use another gsub here to replace the text following a colon with empty space
+names_emojis<-gsub(":.*", "", emojis$name) 
+
+#replace emojis with names
+tokens_pruned<-tokens_pruned%>%
+  tokens_replace(pattern = emojis$emoji,          #replace the character string for an emoji with...
+                 replacement = names_emojis)      #the corresponding name (from which we just removed some text)        
+
+
+#emoji names introduces phrases in our tokens, Let's split them apart.
+tokens_pruned<-tokens_pruned%>%
+  tokens_split(separator = " ")                   
+
+
+#check the final version of the tweet we looked at previously
+tokens_pruned[[551]]
+```
+
+This person included 5 emojis with a woman facepalming. As it turns out, people often repeat emojis in social media texts. This might introduce some noise into some of our data, but repeating emojis might also be useful information. So we'll leave this as it is for now.  
+
+**Stemming and Lemmatization**
+
+A single dictionary entry can come in variety a forms. "am", "are", "is", and "be" share the same meaning, and often we want to reduce these different words into a single form. We might change all of the above to "be" or change words like "stupidity" to "stupid". Stemming and lemmatization are two approaches to this. Stemming is more simplistic, and usually involes removing the ends of words. Lemmatization is more sophisticated; it actually us  morphological analysis to return the dictionary form of a word. Quanteda has a stemming function and can also be used for lemmatization if you have a list of lemmas (using the same tokens_replace function we used previously). But here we'll use the textstem package to lemmatize.
+
+```{r , message=FALSE, warning=FALSE}
+tokens_pruned[[655]]                            #look at an example tweet
+textstem::lemmatize_words(tokens_pruned[[655]]) #lemmatize (makes sure to install "textstem")
+tokens_wordstem(tokens_pruned[655])             #stem with quanteda
+
+```
+
+
+Both lemmatization and stemming shorten words to a more basic form, but stemming chops off the end of words while lemmatization preseves real words. 
+We can also export the lemma lexicon and use quanteda to lemmatize the full data set. 
+
+```{r , message=FALSE, warning=FALSE}
+#replace tokens with lemmas using the hash_lemma dictionary from the lexicon package
+tokens_pruned<-tokens_pruned%>%
+  tokens_replace(pattern = lexicon::hash_lemmas$token,              
+                 replacement = lexicon::hash_lemmas$lemma)
+```
+
+### Exploring Word Frequencies and Co-Occurrences
+
+We are now finally ready to start digging into the language that distinguishes between our two different samples of tweets. First, let's look at the results for the top features as we did at the beggining.
+
+
+```{r , message=FALSE, warning=FALSE}
+
+#convert to dfm
+dfm<-dfm(tokens_pruned)
+
+#top 20 features in each corpus
+dfm_subset(dfm, Topic == "Climate")%>%
+  topfeatures(20)
+
+dfm_subset(dfm, Topic == "Covid")%>%
+  topfeatures(20)
+
+```
+
+Now our top features look much more like the topics they came from. But there is an even more effective metric for finding the tokens that are best at distinguishing between two corpuses--the term frequency-inverse document frequence (tf-idf). Tf-idf find the words that best distinguish one document from another by decreasing the weight of words that are used frequently and increasing the weight of words that are less frequently used across a set of documents. Tf-idf scores pinpoint words that are common enough to be important to one corpus, but rare enough overall to make them stand out. 
+
+```{r , message=FALSE, warning=FALSE}
+#calculate tfidf scores for each word in our dfm
+tfidf<-dfm_group(dfm, groups = "Topic")%>%
+  dfm_tfidf(scheme_tf = "prop")
+
+#transpose and look at highest scores in each corpus
+t(tfidf)%>%
+  dfm_sort(margin="both")
+
+
+```
+
+**Visualizing**
+
+Let's use ggplot and wordclouds to visual the words that best distinguish between these corpora
+
+```{r , message=FALSE, warning=FALSE}
+p1<-t(tfidf[1,])%>%
+  dfm_sort(margin="both",decreasing=T)%>%
+  convert(to="data.frame")%>%
+  slice(n=1:20)%>%
+  ggplot(aes(reorder(doc_id, Climate), Climate, fill="")) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  coord_flip() +
+  theme_minimal() + 
+  ggtitle(label = "Climate Change")+
+  scale_fill_manual(values="red3")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2<-t(tfidf[2,])%>%
+  dfm_sort(margin="both",decreasing=T)%>%
+  convert(to="data.frame")%>%
+  slice(n=1:20)%>%
+  ggplot(aes(reorder(doc_id, Covid), Covid, fill="")) +
+           geom_col(show.legend = FALSE) +
+           labs(x = NULL, y = "tf-idf") +
+           coord_flip() +
+           theme_minimal() + 
+           ggtitle(label = "COVID-19")+
+           scale_fill_manual(values="royalblue3")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+library(ggpubr)
+ggarrange(p1,p2)
+
+```
+
+We can also visualize this same information with word clouds
+
+```{r , message=FALSE, warning=FALSE}
+tfidf[1,]%>%
+  textplot_wordcloud(min_count = topfeatures(tfidf[1,],100)[[80]], min_size=1.1,max_size=5, random_order = FALSE, rotation = 0.25,  
+                     color = RColorBrewer::brewer.pal(6, "Dark2"))
+
+tfidf[2,]%>%
+  textplot_wordcloud(min_count = topfeatures(tfidf[1,],100)[[80]], min_size=1.1,max_size=5, random_order = FALSE, rotation = 0.25,  
+                     color = RColorBrewer::brewer.pal(6, "Dark2"))
+
+
+
+```
+
+**Feature Co-occurence Matrices**
+
+Before we move on to sentiment analyses, let's look at one other tool in Quanteda that is especially relevant to Twitter data. We can also use document feature matrices to look at how often tokens co-ccur in a data set. Looking at how words tend to co-occur is fundamental to methods like word embeddings, which we'll talk more about in Part 4. For now, let's create a feature co-occurence matrix with just the hashtags in our data set and then visualize with a netword map which hashtags tend to co-occurr in the same tweet.   
+
+```{r , message=FALSE, warning=FALSE}
+
+#remove all tokens from document feature matrix that are not hashtags
+dfm_hash<-dfm_select(
+  dfm,
+  pattern = "#*",
+  selection = "keep",
+  case_insensitive = TRUE,
+)
+
+#creat feature co-occurrence matrix
+fcm_hash<-fcm(dfm_hash)
+head(fcm_hash)
+
+#select top  25 hashtags from each topic and combine them into a character vector
+top_hash<-dfm_subset(dfm_hash, Topic == "Climate")%>%
+  topfeatures(25)%>%
+  names()
+
+top_hash<-c(top_hash,
+            dfm_subset(dfm_hash, Topic == "Covid")%>%
+  topfeatures(25)%>%
+  names())
+
+#create an fcm composed of just the top 50 hashtags
+fcm_tophash <- fcm_select(fcm_hash, pattern = top_hash)
+#Draw network
+textplot_network(fcm_tophash, min_freq = 0.1, edge_alpha = 0.8, edge_size = 5)
+
+```
+
+We are now ready to move beyond looking at frequencies and start trying to automate a slightly deeper understanding of text. In Part 3, we'll use a few simple, but effective tools for analyzing sentiment. 

@@ -1,0 +1,354 @@
+---
+title: "NLP in R Part 4: Word Embeddings"
+output: html_document
+year: '2020'
+---
+
+```{r ,include=F}
+#we pre-load the embeddings we trained here and the larger data sets we collected.
+#note that we have uploaded the word embeddings trained in this example to our OSF page. 
+setwd("C:/Users/cwpur/Dropbox/R NLP Tutorials/Part 4 Word Embeddings")
+wv_twts <- readRDS("wv_twts.rds")
+wv_revs <- readRDS("wv_revs.rds")
+```
+
+---
+
+We've already looked at feature co-occurrence matrices in some of our earlier examples. Now we are going use a much more advanced algorithm to extract more meaning out of these word co-occurences. We'll represent each word with a numeric vectors, or word embedding. But word vectors carry a great deal of meaning. Most notably, they understand analogies. For example, if you take the vector for the word "Paris", subtract the vector for  France, and add the vector for Germany, the result is a vector that is extremely similar to the vector for Berlin (Paris is to France as Berlin is to Germany).
+
+Word embeddings are commonly used as features in language models, but they also reveal things about how concepts relate to one another differently across contexts. We'll introduce tools for you to start training your own word embeddings, see how our embeddings differ when we train them on different corpora, and go over how to import and use embeddings that other researchers have already trained on massive data sets.
+
+---
+
+### Loading packages and Data
+
+You'll need the below packages for this example
+
+```{r packages, message=FALSE, warning=FALSE}
+
+library(quanteda)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(rwhatsapp)
+library(rtweet)
+library(text2vec)
+
+```
+
+### Data Acquisition Revisited
+
+---
+
+While there is no hard rule about the amount of text you need to train embeddings, embeddings will generally be more meaningful with larger sample sizes. The number of tweets we've been working with so far is on the small side for training embeddings. The code here willshould still run if you want to focus on learning the script for now. Your results just might not make very much sense. That being said, we'll also provide some space here for collectign more tweets if you wish
+
+We downloaded our datasets from the URLs below. If you are having trouble getting these to work, you can visit the sites below to download the text files with tweet ids directly. Or you could also visit a repository (like https://www.docnow.io/) that has links to all kinds of different sets of twitter ids. Any of them will work with these examples. 
+
+Climate change:
+https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/5QCCUU
+
+COVID-19:
+https://catalog.docnow.io/datasets/20200319-covid-19/
+
+As a comparison, we'll also train our embeddings on a commonly used data set of movie reviews from IMDB
+https://ai.stanford.edu/~amaas/data/sentiment/
+
+The code below illustrates how to download tweet ids directly from these repositories all within R. Alternatively, you can follow the links above, download the txt files, and use the read_lines function to read them into your R environment. We have also posted tweet ids we used in this example to our OSF page if you want to use the same IDs that we did. 
+
+```{r , eval=FALSE}
+#climate change
+temp <- tempfile()
+url<-"https://dataverse.harvard.edu/api/access/datafile/:persistentId?persistentId=doi:10.7910/DVN/5QCCUU/QPYP8G"
+download.file(url,temp)
+climate_ids<-read_lines(temp, n_max = 500000L)
+
+#covid
+#the ids for this data set are spread across multiple text files. The urls have different numbers near the end
+#we wrote a short loop to iterate over the urls, download the ids, and store them in a list
+urls<-paste0("https://raw.githubusercontent.com/echen102/COVID-19-TweetIDs/master/2020-10/coronavirus-tweet-id-2020-10-01-",
+             c("00","01","02","3"),".txt")
+
+covid_ids<-list()
+for (i in 1:3){
+  temp <- tempfile()
+  download.file(urls[i],temp)
+  covid_ids[[i]]<-read_lines(temp)
+}
+
+covid_ids<-unlist(covid_ids)
+
+#IMDB 
+#The below code will download the IMDB reviews into a temporary directory, read all 50k reviews into your environment,
+#and combine them into a single list.
+
+#create a temporary directory
+tmpdir <- tempdir()
+#download the IMDB reviews into the directory
+url <- 'https://ai.stanford.edu/~amaas/data/sentiment/aclImdb_v1.tar.gz'
+file <- basename(url)
+download.file(url, file)
+#extract
+untar(file, exdir = tmpdir )
+list.files(tmpdir)
+#read in all 50k text files (note that they are divided into test and training sets stored in 4 different subfolders)
+setwd(paste0(tmpdir, "\\aclImdb\\train\\pos"))
+revs1<- lapply(list.files(), function(x)read_lines(x))
+setwd(paste0(tmpdir, "\\aclImdb\\train\\neg"))
+revs2<- lapply(list.files(), function(x)read_lines(x))
+setwd(paste0(tmpdir, "\\aclImdb\\test\\pos"))
+revs3<- lapply(list.files(), function(x)read_lines(x))
+setwd(paste0(tmpdir, "\\aclImdb\\test\\neg"))
+revs4<- lapply(list.files(), function(x)read_lines(x))
+#combine
+revs<-c(revs1,revs2,revs3,revs4)
+
+```
+
+If you followed the above, then you should have over a million tweet ids in your R environment. We have uploaded the exact tweet IDs we used in this example to our OSF page (though remember, even if you use these exact ids, your results may differ slighlty from ours because some tweets are deleted over time). For the analyses we are about to run, the more data, the better. However, the Twitter API limits the speed at which you can collect hydrate tweets to 90k per 15 minutes.  
+
+You can set the number of tweets you want to hydrate by changing the numbers in the brackets inside the lookup_statuses function. To collect more automatically, you'll have to prevent R from trying to hydrate more than 90K every 15mins (this is Twitter's "rate limit"). We've included a simple loop that will manage this for you if you want to collect more than 90K tweets at once. Alternatively, you can also use the hydrator app (see here: https://github.com/DocNow/hydrator)
+
+
+```{r , eval=FALSE}
+#collect from twitter api (it took us ~10mins to hydrate these 90k tweets on a mid-range laptop)
+covid<-lookup_statuses(covid_ids[1:45000], parse = TRUE)
+climate<-lookup_statuses(climate_ids[1:45000], parse = TRUE)
+
+```
+
+If you want to collect more than 90K tweets, you'll have to manage your rate limit this loop will cause R to take a break after every 90K tweets until your rate limit resets each loop will hydrate 90K tweets and add them to the tweets already collected above if you run the below code it will hydrate the first 180K COVID-19 tweet ids. Note that we've placed a conservative wait period in the loop below to ensure you don't hit your rate limit, but you should be able to adjust this speed up collection. 
+
+```{r , eval=FALSE}
+tweets<-data.frame(matrix(ncol = 90, nrow = 1)) #initialize empty data frame
+ids<-climate_ids                                #choose tweet ids
+loops=4                                         #increase tweets hydrated in incrememnts of 90K
+
+for(i in 0:(loops-1)){
+  n<-90000*i
+  x<-lookup_statuses(ids[(1+n):(90000+n)], parse = TRUE)
+  names(tweets)<-names(x)
+  tweets<-rbind(tweets,x)
+  Sys.sleep(900)   #note that we've put a conservative delay to make sure you don't hit a rate limit  
+  print(i)
+}
+
+#be sure to save the tweets you collect. It is also better to collect multiple smaller files, 
+#rather than a single huge data file with millions of tweets.
+
+#saveRDS(twts_covid,"covidtwts_raw.rds")
+#saveRDS(twts_climate,"climatetwts_raw.rds")
+```
+
+To make sure the GloVe embeddings in these examples are meaningful to some degree, we hydrated the first 500K tweet ids in each corpus, which returned ~330K climate tweets and ~470K COVID-19 tweets (though this sample will be quite a bit smaller after removing retweets)
+
+**How should we Pre-Process Before Training Embeddings?**
+
+Our current goal is quite different from when we needed to match words to a lexicon. In a way, we are training our own lexicon and asigning each entry a numeric vector based on the words that occur around it. We could try to train vectors for every token in our corpus if we wanted (even punctuation). However, GloVe can't easily learn the meaning of words that rarely occur in the text we show it. It needs multiple examples to learn how each word is used. 
+
+We could consider lemmatizing or stemming our words so that our words have more examples. We are faced with a trade off between learning how variations of words are used differently and having more examples of each word in our training data. Since our data set is still a bit on the smaller side, we'll lemmatize our tokens. 
+
+For everthing else (including hashtags, emojis, and mentions) we'll keep tokens that occur at least 5 times and remove everything else.
+
+```{r , eval=F}
+#We're going to combine our data sets for this example so that we have a larger sample to train our embeddings upon
+twts_raw<-climate%>%
+  mutate(Topic = "Climate")%>%
+  rbind(covid%>%
+          mutate(Topic="Covid"))
+
+#remember to first remove retweets and tweets that are not in English
+twts_text<-twts_raw%>%
+  filter(lang == "en" &            
+         is_retweet == FALSE)%>%   
+  select(text,Topic)%>%
+  corpus(meta="Topic")
+
+#free up memory
+rm(list=c("climate","covid","twts_raw"))
+gc()
+
+#pre-processing (replace numbers with a placeholder and lemmatize)
+tokens_clean<-twts_text%>%
+  tokens()%>%
+  tokens_replace(pattern = "[0-9]+",                  
+                 replacement ="<number>",
+                 valuetype="regex")%>%
+  tokens_tolower()%>%
+  tokens_replace(pattern = lexicon::hash_lemmas$token,              
+                 replacement = lexicon::hash_lemmas$lemma)
+
+#we'll repeat this for the movie reviews
+tokens_revs<-unlist(revs)%>%
+  tokens()%>%
+  tokens_replace(pattern = "[0-9]+",                  
+                 replacement ="<number>",
+                 valuetype="regex")%>%
+  tokens_tolower()%>%
+  tokens_replace(pattern = lexicon::hash_lemmas$token,              
+                 replacement = lexicon::hash_lemmas$lemma)
+
+```
+
+For this exercise, we'll train embeddings on our two corpora separately to see how this affects relationships between words in our embedding space.
+
+```{r , eval=F}
+
+#we'll also need names of features that occurr fewer than 5 times in each corpus
+twt_feats<-tokens_clean%>%
+  dfm()%>%
+  dfm_trim(max_termfreq = 4)%>%
+  featnames()
+
+rev_feats<-tokens_revs%>%
+  dfm()%>%
+  dfm_trim(max_termfreq = 4)%>%
+  featnames()
+```
+
+Now let's make a feature co-occurence matrix, exluding tokens that occur fewer than 5 times
+
+When we do this, we have to remember that GloVe cares the proximity of words to one another. If we simply remove words that occur fewer than 5 times, some words will become adjacent that were not actually next to one another. To avoid this, we set the "padding" argument to TRUE, which replaces all removed tokens with an empty string. 
+
+
+```{r , eval=F}
+
+#replace tokens occurring fewer than 5 times with an empty string
+tokens_twts<-tokens_clean%>%
+  tokens_remove(twt_feats, padding = TRUE)
+
+tokens_revs<-tokens_revs%>%
+  tokens_remove(rev_feats, padding = TRUE)
+
+```
+
+To form our feature co-occurence matrix, we have to decide what counts as a co-occurence exactly. Below, we define the window around each word in which we will count co-occurrences. We also tell quanteda to weight co-occurences less the farther away they occur from each other in the window.
+
+```{r , eval=F}
+#feature co-occurence matrices
+fcm_twts <- tokens_twts%>%
+  fcm(context = "window",  #count words within a window before and after each word as co-occurrences 
+      count = "weighted",  #weight words that appear father away in the window less
+      weights = 1 / (1:5), #define weights
+      tri = TRUE)          #return only values in diagonal and above of matrix
+
+
+fcm_revs <- tokens_revs%>%
+  fcm(context = "window",  
+      count = "weighted",  
+      weights = 1 / (1:5), 
+      tri = TRUE)    
+```
+
+Below, we apply the same introductory GloVe model provided by the author of the text2vec package, Dmitriy Selivanov. See http://text2vec.org/glove.html for the original code. 
+
+If you just want to run the models quickly and look at the results, try setting the rank to 50 and number of iterations (n_iter) to 10. It's worth coming back and tweaking these values to try to obtain better embeddings. For more details about how to train your embeddings, see the GloVe paper (Pennington, Socher, & Manning, 2014)
+
+Note that text2vec outputs two sets of embeddings (main and context below), which we combine.
+
+```{r , eval=F}
+
+##train embeddings on each corpus##
+
+#train on tweets
+glove <- GlobalVectors$new(rank = 100, x_max = 10)
+twts_main <- glove$fit_transform(fcm_twts, n_iter = 40, convergence_tol = 0.01)
+twts_context <- glove$components
+wv_twts <- twts_main + t(twts_context)
+
+#train on imdb reviews
+glove <- GlobalVectors$new(rank = 100, x_max = 10)
+revs_main <- glove$fit_transform(fcm_revs, n_iter = 40, convergence_tol = 0.01)
+revs_context <- glove$components
+wv_revs <- revs_main + t(revs_context)
+```
+
+The below code will calculate the 20 most similar words, based on the vectors we trained, to whatever word you put in place of hot (as long is it was in the vocabulary we trained). Play around, replace the word with whatever you think might be interactions, look at the most similar words for each corpus. 
+
+```{r ,message=FALSE, warning=FALSE}
+cos_twts <- sim2(x = wv_twts, y = wv_twts["hot", , drop = FALSE] , method = "cosine", norm = "l2")
+head(sort(cos_twts[,1], decreasing = TRUE), 20)
+
+cos_revs <- sim2(x = wv_revs, y = wv_revs["hot", , drop = FALSE] , method = "cosine", norm = "l2")
+head(sort(cos_revs[,1], decreasing = TRUE), 20)
+
+```
+
+If your sample was on the smaller side, you'll probably notice some oddities. Our sample is on the smaller side as well, but it is still very easy to tell that the embeddings were trained in different contexts. For example, on Twitter our embeddings have learned that the word "hot" goes with words like "summer","spin-dry" and "season". In our embeddings trained on movie reviews, the three most similar words to hot are "chick","naked",and "sexy". 
+
+
+### Analogy tests
+
+One way to formally test the validity of your embeddingsis by asking them a series of analogies and seeing if the embeddings return the correct vector (just like the Berlin is to Germany as Paris is to France example). Let's see how our embeddings fair when asked few thousand questions of this sort.
+
+```{r ,message=FALSE, warning=FALSE}
+#download text file with analogy questions.
+temp <- tempfile()
+url<-"https://raw.githubusercontent.com/nicholas-leonard/word2vec/master/questions-words.txt"
+download.file(url,temp)
+
+#prepare embeddings for analogy tests
+anal_twts<-prepare_analogy_questions(temp, rownames(wv_twts))
+anal_revs<-prepare_analogy_questions(temp, rownames(wv_revs))
+
+#removes sets of questions for which we didn't embeddings for a single analogy
+anal_twts<-anal_twts[sapply(anal_twts, function(x) length(x)) > 0]
+anal_revs<-anal_revs[sapply(anal_revs, function(x) length(x)) > 0]
+
+#check analogy accuracy
+check_analogy_accuracy(questions_list = anal_twts, m_word_vectors = wv_twts)
+check_analogy_accuracy(questions_list = anal_revs, m_word_vectors = wv_revs)
+```
+
+Neither of our embeddings performed very well at all (almost completely missing everything outside of the family analogies) but again, our samples were small and our tweets probably didn't contain very many examples of people talking about countries and their capitols. It did understand a decent number of family analogies. Our embeddings trained on just 50k movie reviews already understand nearly half of the analogies from this category. We can look at the top 5 examples from this set of analogies.
+
+```{r ,message=FALSE, warning=FALSE}
+#read the analogy questions from the temp file
+qs<-read_lines(temp)
+#find where the family category starts
+famstart<-which(str_detect(qs,"family"))
+qs[famstart:(famstart+5)]
+  
+```
+
+
+### Pre-trained Embeddings
+
+The benefit of training your own embeddings is that they are trained on the exact same text that you wish to analyze. All else equal, word embeddings trained on wikipedia articles will perform worse when applied to tweets than embeddings trained on tweets. However, there are a wide variety of publicly available, pre-trained embeddings. The GloVe website  (https://nlp.stanford.edu/projects/glove/) contains several pre-trained embedding sets, including one trained on 2 billion tweets. For many tasks, it is both easier and more effective to use pre-trained word embeddings.
+
+Let's download the GloVe embeddings trained on Tweets and look at some similarities and analogies. You should easily be able to find the zip file with the embeddings trained on Tweets from the glove website linked above. Be sure to save the file 'glove.twitter.27B.200d.txt' in your working directory before running the below code. 
+
+```{r , message=FALSE, warning=FALSE}
+#load pre-trained GloVe embeddings
+
+
+#data.table's fread() function reads the text file in quickly
+glove<-data.table::fread('glove.twitter.27B.200d.txt', data.table = FALSE, encoding = 'UTF-8')
+
+#we'll convert this to a matrix with named rows (to make it compatible with text2vecs functions)
+names<-glove[[1]]
+glove<-as.matrix(glove[,-1])
+rownames(glove)<-names
+rm(names)
+
+#check similarities from ealier
+cos_glove <- sim2(x = glove, y = glove["hot", , drop = FALSE] , method = "cosine", norm = "l2")
+head(sort(cos_glove[,1], decreasing = TRUE), 20)
+
+#embeddings perform much better on analogies when they are trained on billions of documents 
+berlin = glove["paris", , drop = FALSE] - 
+  glove["france", , drop = FALSE] + 
+  glove["germany", , drop = FALSE]  
+
+#berlin should be near the top of the most similar vectors
+cos_berlin <- sim2(x = glove, y = berlin , method = "cosine", norm = "l2")
+head(sort(cos_berlin[,1], decreasing = TRUE), 20)
+```
+
+Word embeddings reveal a lot about meaning of words in the corpus they are trained upon. The simple example we've used here (whether the word "hot" is associated with attractivness or temperature) is just the beginning. For example, other work has leveraged word embeddings to study the prevalence of gender stereotypes in language (see Bolukbasi, Chang, Zhou, Saligrama, & Kalai, 2016). You can test this yourself in the glove embeddings by subtracting the vector for man from the vector for doctor and adding woman, which will return nurse near the top of the list of similarities. 
+
+
+
+
+
+
+

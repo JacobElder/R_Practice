@@ -1,0 +1,164 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(LSAfun)
+```
+
+
+# LSA
+
+```{r}
+setwd("/Volumes/Research Project/TraitSimilarity/SemanticSpaces/")
+#lapply(curFiles, load)
+#load("TASA.rda")
+list.files(pattern = ".rda") %>%
+  map(load)
+```
+
+
+```{r}
+normTraits <- read.csv("~/Google Drive/Volumes/Research Project/Identities to Traits/Study 2/Cleaning/Output/Normative/normativeDfStudy12.csv", header = T)
+```
+
+# Traits Not Present
+
+## TASA
+
+```{r}
+normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(TASA)) )]
+paste0("TASA has mismatch of: ", length(normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(TASA)) )]) )
+```
+
+## EN_100K
+
+```{r}
+normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(EN_100k)) )]
+paste0("EN_100k has mismatch of: ", length(normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(EN_100k)) )]) )
+```
+
+## ukwac
+
+```{r}
+normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(ukwac)) )]
+paste0("ukwac has mismatch of: ", length(normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(ukwac)) )]) )
+```
+
+## baroni
+
+```{r}
+normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(baroni)) )]
+paste0("baroni has mismatch of: ", length(normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(baroni)) )]) )
+```
+
+# Baroni has highest match
+
+```{r}
+baronimismatch <- normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(baroni)) )]
+```
+
+```{r}
+normTraits$traits <- gsub("-", "", normTraits$traits)
+normTraits$traits[which( !(tolower(normTraits$traits) %in% rownames(TASA)) )]
+```
+
+
+```{r}
+# Present
+normTraits$traits[which(tolower(normTraits$traits) %in% rownames(TASA))]
+normTraits$traits[which(tolower(normTraits$traits) %in% rownames(EN_100k))]
+normTraits$traits[which(tolower(normTraits$traits) %in% rownames(ukwac))]
+baroniPresent <- normTraits$traits[which(tolower(normTraits$traits) %in% rownames(baroni))]
+baroniPresent
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+maleSims <- unlist(lapply(tolower(baroniPresent), function(x) Cosine("male", x, tvectors = baroni)))
+femaleSims <- unlist(lapply(tolower(baroniPresent), function(x) Cosine("female", x, tvectors = baroni)))
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+blackSims <- unlist(lapply(tolower(baroniPresent), function(x) Cosine("african", x, tvectors = baroni)))
+whiteSims <- unlist(lapply(tolower(baroniPresent), function(x) Cosine("caucasian", x, tvectors = baroni)))
+```
+
+
+```{r}
+mf <- cbind(maleSims,femaleSims)
+mf <- as.data.frame(mf)
+colnames(mf) <- c("male", "female")
+
+cor.test(blackSims, whiteSims)
+
+test <- mf[200:289,]
+
+# Plot MDS
+ggscatter(test, x = "male", y = "female",
+          label = baroniPresent[200:289],
+          size = 1,
+          repel = TRUE)
+```
+
+```{r}
+multicos(tolower(baroniPresent), tvectors = baroni)
+```
+
+
+```{r}
+wb <- cbind(whiteSims,blackSims)
+wb <- as.data.frame(wb)
+colnames(wb) <- c("caucasian", "african")
+
+test <- wb[200:289,]
+
+# Plot MDS
+ggscatter(test, x = "caucasian", y = "african",
+          label = baroniPresent[200:289],
+          size = 1,
+          repel = TRUE)
+```
+
+```{r}
+test<-plot_neighbors("outgoing",n=50,tvectors = baroni, connect.lines = "all", col="rainbow")
+test
+```
+
+
+```{r}
+cor.test(normTraits$Female[normTraits$traits %in% baroniPresent], femaleSims)
+```
+
+# word2vec
+
+```{r}
+glove.6B.300d<-read.table("~/Downloads/glove.6B/glove.6B.300d.txt",sep = )
+vectors = data.table::fread("~/Downloads/glove.6B/glove.6B.300d.txt", data.table = F,  encoding = 'UTF-8') 
+```
+
+```{r}
+GLOVE_DIR = "~/Downloads/glove.6B/glove.6B.300d.txt"
+embeddings_index = {}
+f = open(GLOVE_DIR, encoding="utf8")
+for line in f:
+    try:
+        values = line.split()
+        word = values[0]
+        coefs = np.asarray(values[1:], dtype='float32')
+        embeddings_index[word] = coefs
+    except:
+        pass
+f.close()
+```
+
+
+
+```{r}
+install.packages("word2vec")
+library(word2vec)
+
+```
+
+
+

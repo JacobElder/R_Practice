@@ -1,0 +1,431 @@
+---
+title: 'NLP in R Part 3: Sentiment Analyses'
+output:
+  html_document: default
+  word_document: default
+year: '2020'
+---
+
+```{r data, include=FALSE,message=FALSE, warning=FALSE}
+#we pre-loaded the results of our sentiment analyses with vader shorten the time it takes to knit to html
+setwd("C:/Users/cwpur/Dropbox/R NLP Tutorials/Part 3 Sentiment Analysis")
+sent_vader <- readRDS("sentiment_vader.rds")
+climate <- readRDS("climate_twts.rds")
+covid<- readRDS("covid_twts.rds")
+
+```
+---
+
+If you've spent much time looking for examples of natural langauge processing in action, you've probably already seen the phrase "sentiment analyses" several times. You might see it accompanied by "opinion mining," and you'll find a lot of examples on the Internet that use publicly accessable data bases of Amazon.com reviews and movie reviews (such as this one https://ai.stanford.edu/~amaas/data/sentiment/). In general, sentiment analyses is exactly what it sounds like--quantifying the  sentiment of text. You might see this summarized by a single metric (positive to negative, like LIWC's Tone algorithm for example). Other tools have separate metrics for positivity and negativity. 
+
+Here we'll apply the skills we just learned to conudct some simple approaches to sentiment analyses and then we'll use slightly more complex tool (VADER) that introduces some grammatical rules to improve performance and apply that to geographic data.  
+
+<br>
+
+---
+
+### Loading packages and Data
+
+You'll need the below packages for this example
+
+```{r packages, message=FALSE, warning=FALSE}
+
+library(quanteda)
+library(tidyverse)
+library(readr)
+library(vader)
+library(ggplot2)
+library(rwhatsapp)
+
+```
+
+---
+
+Let's import the tweets we collected from Part 1. We've included a condensed version of the code we used to combine our tweets into a single corpus. 
+
+```{r , eval=F}
+#reload our original data sets
+climate <- readRDS("climate_twts.rds")
+covid<- readRDS("covid_twts.rds")
+```
+
+```{r , message=FALSE, warning=FALSE}
+#this is a condensed version of the code we've been using to combine corpuses and add metadata
+corpus_twts<-bind_rows(climate,covid)%>%
+  mutate(Topic = c(rep("Climate",nrow(climate)),rep("Covid",nrow(covid))))%>%
+  filter(lang == "en" &            
+         is_retweet == FALSE)%>%
+  select(text,Topic,retweet_count,is_quote,followers_count,friends_count)%>%
+  corpus(meta=list("Topic","retweet_count"))
+
+```
+
+# Counting Words
+
+Some of the most straightforward approaches to sentiment analyses count the number of times negative and positive words appear in text. To do this we'll need a dictionary (or lexicon) of words that are categorized as positive or negative. Quanteda comes with one such dictionary which happens to have been validated on political text (see Young & Soroka, 2012).
+
+Let's first look at how this works using a single tweet
+
+```{r , message=FALSE, warning=FALSE}
+#increase quanteda printing limit first
+quanteda_options(print_tokens_max_ntoken = 50)
+                 
+#original tweet
+corpus_twts[[6]]
+
+#tweet with sentiment labeled
+corpus_twts[[6]]%>%
+  tokens()%>%
+  tokens_lookup(data_dictionary_LSD2015, exclusive=FALSE)
+
+```
+
+Now let's pre-process and look-up sentiment scores for all the words in our entire data set.
+
+```{r , message=FALSE, warning=FALSE}
+
+#pre-processing
+clean_tweets<-function(x){x%>%
+  tokens(remove_punct=TRUE,
+         remove_symbols=TRUE,
+         remove_url=TRUE,
+         split_hyphens=TRUE)%>%
+  tokens_remove(pattern = stopwords(),
+                min_nchar = 3)%>%
+  tokens_replace(pattern = c("@\\w+","[0-9]+"),                  
+                 replacement = c("<user>","<number>"),       
+                 valuetype="regex")%>%
+  tokens_replace(pattern = emojis$emoji,          
+                 replacement = gsub(":.*", "", emojis$name))%>%
+  tokens_split(separator = " ")%>% 
+  dfm()
+}
+
+#clean
+dfm<-clean_tweets(corpus_twts)
+#Sentiment lookup for both topics
+dfm_sent<-dfm%>%
+  dfm_group(groups="Topic")%>%             #divide dfm into our Covid and Climate topics
+  dfm_lookup(data_dictionary_LSD2015)      #lookup negative and positive words using dictionary
+
+  
+#let's also look at the number of negative and positive words per tweet in each corpus
+#we can do this by assigning weights to the values in the df
+
+
+weights<-c(1/table(dfm$Topic)["Climate"],      #count number of climate tweets and take inverse
+           1/table(dfm$Topic)["Covid"])        #repeat for covid and concatenate
+
+dfm_weight(t(dfm_sent),weights=weights)       #transpose dfm so weights are applied correctly
+
+
+```
+
+**Negations**
+
+On average, the covid corpus contains more positive AND negative words than the climate corpus per tweet. However, notice that our summary also has values for "neg_positive" and "neg_negative". This is because this lexicon also contains entries for negated sentiment (e.g., "I am not happy"). These words were removed when we eliminated stopwords. However, they might be useful here.
+
+Now, say we want to keep negations but still get rid of stopwords. One option is to remove the word "not" from our list of stopwords. Altenativley, we could combine our negations into single tokens and the dictionary we are using will identify these as negated phrases. The below code does the latter.  
+
+```{r , message=FALSE, warning=FALSE}
+#before cleaning, we'll combine the negations into single tokens
+dfm_neg<-tokens_compound(tokens(corpus_twts),data_dictionary_LSD2015)%>%
+  clean_tweets()
+```
+
+Now let's check how often negations occur in our data.
+
+```{r , message=FALSE, warning=FALSE}
+dfm_neg%>%
+  dfm_group(groups="Topic")%>%           
+  dfm_lookup(data_dictionary_LSD2015)
+```
+
+Of the ~4000 sentiment words in each of our corpora, around 30-40 were negations. Negations, or at least the ones contained in our lexicon, were fairly rare. 
+
+**Co-Occurrences with Sentiment**
+
+Let's combine what we learned in Part 2 about co-ocurrence matrices and see which of the top hashtags are accompanied by the most postiive and negative emotion words. 
+
+```{r , message=FALSE, warning=FALSE}
+fcm_hashsent<-dfm_neg%>%
+  dfm_lookup(data_dictionary_LSD2015)%>%
+  cbind(dfm_keep(dfm_neg,pattern="#*"))%>%
+  fcm()
+#look at top four rows
+fcm_hashsent[1:4,]
+```
+
+The above shows the number of times negative and positive words co-occur with each hashtag (within the same tweet). For each hashtag, lets divide the number of negative words by the total number of negative and postive words that occur with it. Then we'll see which hashtags have the most negative tp total sentiment ratio.
+
+```{r , message=FALSE, warning=FALSE}
+#divide the number of co-occurences with negative words by the total co-occurrences with both postive and negative
+neg_count<-as.numeric(fcm_hashsent[1,])
+pos_count<-as.numeric(fcm_hashsent[2,])
+sent_count<-as.numeric(fcm_hashsent[2,])+as.numeric(fcm_hashsent[1,])
+hash_ratio<-neg_count/sent_count
+
+#now let's look at the hashtags with that highest proportion of negative words
+#excluding hashtags that didn't co-occur with at least 10 sentiment words
+tibble(negativity=hash_ratio, 
+       sent_count=sent_count,
+       hashtag=featnames(fcm_hashsent))%>%
+  filter(sent_count>9)%>%
+  arrange(desc(negativity))
+
+
+```
+
+Now let's plot. 
+
+```{r , message=FALSE, warning=FALSE}
+#top 30 hashtags in data
+tophash<-dfm_neg%>%
+  dfm_keep(pattern="#*")%>%
+  topfeatures(30)
+#create df and filter by top 50
+sent_df<-tibble(neg=neg_count,pos=pos_count,Hashtag=featnames(fcm_hashsent))%>%
+  filter(Hashtag %in% names(tophash))
+
+#plot
+library(ggrepel) #we use geom_label_repel to make the hashtags easier to see
+ggplot(sent_df, aes(x= neg, y= pos, label=Hashtag))+
+  geom_point(color="black") + 
+  geom_label_repel(box.padding = 0.5,
+                   fill = "white",
+                   size=4.5,
+                   ylim=c(0,60))+
+  coord_cartesian(xlim = c(0, 45),ylim=c(0,55))+
+  theme_minimal() +
+  ggtitle("Hashtag Co-Occurrence with Negative and Positive Words") +
+  xlab("Occurrence with Negative Words") +
+  ylab("Occurrence with Positive Words") 
+
+```
+
+Interestingly, language surrounding mask-wearing is largely positive. Even the hashtag "that says "wearadamnmask" is accompanied mostly by positive words. Conversely, language around climate change hashtags is more negative. Hashtags like science and energy are fairly neutral.  
+
+### VADER 
+
+Word counting methods are easy to implement and interpret, but we can do more than count words. Combining a lexicon approach with a few grammatical rules can improve our sentiment estimates. One of the most efficient tools that does this is VADER (Hutto & Gilbert, 2014). VADER uses a lexicon that measures sentiment continously based on human ratings, and it was developed with short social media texts specifically in mind. Moreover, VADER implements several rules that account for punctuation (like exclamation points), capitalization, degree modifiers ("very good" vs "good"), and vader looks for tri-grams around words to account for polarity shifts. For example, the lexicon we just used to account for negation would miss this sentence, "I do not think I care for him too much". But VADER looks at tri-grams (three words before and after) around words that express sentiment, which would findr the reversal in this example. 
+
+This is also a reminder of why it is important that your pre-processsing matches your approach. If you turn everything to lower case prior to running your text through VADER, you will lose helpful information. 
+
+```{r , message=FALSE, warning=FALSE}
+#we don't need to do much before passing our text through vader. 
+#since the VADER implementation in R accepts characters strings or data frames, we'll use part of our 
+#cleaning script from the last section (commenting out the parts we don't want to use)
+
+clean_text = function(x){
+  #x = gsub("[^\x01-\x7F]", "", x)          #remove non ASCII (emojis)
+  x = gsub('http.*','',x)                  #remove urls
+  #x = tolower(x)                          #everything to lower case
+  x = gsub("@\\w+", "", x)                 #remove mentions
+  x = gsub("#\\w+", "", x)                 #remove hashtags
+  #x = gsub("/", " ", x)                    #replace forward slash with space
+  #x = gsub("'s", "",x)                     #remove possessive form
+  #x = gsub("[^-[:^punct:]]", "", x,perl=T) #remove punctuation except for hypen
+  x = gsub('[0-9]+', "", x)                #remove numbers
+  #X = gsub("-"," ",x)                      #split hyphenated words
+  #x = gsub("\r?\n|\r", " ", x)             #replace line breaks with a space
+  x = gsub("\\s+"," ",x)                   #remove repeated spaces
+  x = gsub("^ ", "", x)                    # remove blank spaces at the beginning
+  x = gsub(" $", "", x)                    # remove blank spaces at the end
+}
+
+#clean
+twts_clean<-clean_text(texts(corpus_twts))
+twts_df<-tibble(text=twts_clean)
+
+
+```
+
+```{r , eval=F}
+#vader takes a few minutes longer than the dictionary lookups we've been using, 
+#so it's probably a good idea to save these results after they finish
+sent_vader<-vader_df(twts_df$text)
+head(sent_vader)
+```
+
+Vader outputs positivity, negative, and a compound score, all measured continuously. You can also see exactly which words VADER counted towards it's sentiment estimate and the exact score it gave it.
+
+#How does Sentiment towards Climate Change and COVID-19 on Twitter Differ by State?
+
+Now let's combine everything we've gone over and see if we can estimate sentiments towards our two twitter topics by U.S. region.  Our Twitter data has a free form location field which we can use to estimate locations. Unfortunately, it's not easy as it sounds to infer location from a free form text field. A lot of people type things like "middle earth" or " the belly of a whale" as their location. For now, we'll just use a simple, but strict, dictionary lookup method. 
+
+Here is an example of how to make a dictionary in Quanteda. We'll make one that matches either the State name or abbreviation.
+
+```{r , message=FALSE, warning=FALSE}
+states <- dictionary(list(ak = c('AK', 'Alaska'),
+                          al = c(' AL', 'Alabama'),
+                          ar = c(' AR', 'Arkansas'),
+                          az = c(' AZ', 'Arizona'),
+                          ca = c(' CA', 'California'),
+                          co = c(' CO', 'Colorado'),
+                          ct = c(' CT', 'Connecticut'),
+                          dc = c(' DC', 'District of Columbia'),
+                          de = c(' DE', 'Delaware'),
+                          fl = c(' FL', 'Florida'),
+                          ga = c(' GA', 'Georgia'),
+                          hi = c(' HI', 'Hawaii'),
+                          ia = c(' IA', 'Iowa'),
+                          id = c(' ID', 'Idaho'),
+                          il = c(' IL', 'Illinois'),
+                         'in' = c('Indiana'),
+                          ks = c(' KS', 'Kansas'),
+                          ky = c(' KY', 'Kentucky'),
+                          la = c(' LA', 'Louisiana'),
+                          ma = c(' MA', 'Massachusetts'),
+                          md = c(' MD', 'Maryland'),
+                          me = c(' ME', 'Maine'),
+                          mi = c(' MI', 'Michigan'),
+                          mn = c(' MN', 'Minnesota'),
+                          mo = c(' MO', 'Missouri'),
+                          ms = c(' MS', 'Mississippi'),
+                          mt = c(' MT', 'Montana'),
+                          nc = c(' NC', 'North Carolina'),
+                          nd = c(' ND', 'North Dakota'),
+                          ne = c(' NE', 'Nebraska'),
+                          nh = c(' NH', 'New Hampshire'),
+                          nj = c(' NJ', 'New Jersey'),
+                          nm = c(' NM', 'New Mexico'),
+                          nv = c(' NV', 'Nevada'),
+                          ny = c(' NY', 'New York'),
+                          oh = c(' OH', 'Ohio'),
+                          ok = c(' OK', 'Oklahoma'),
+                          or = c(' OR', 'Oregon'),
+                          pa = c(' PA', 'Pennsylvania'),
+                          pr = c(' PR', 'Puerto Rico'),
+                          ri = c(' RI', 'Rhode Island'),
+                          sc = c(' SC', 'South Carolina'),
+                          sd = c(' SD', 'South Dakota'),
+                          tn = c(' TN', 'Tennessee'),
+                          tx = c(' TX', 'Texas'),
+                          ut = c(' UT', 'Utah'),
+                          va = c(' VA', 'Virginia'),
+                          vt = c(' VT', 'Vermont'),
+                          wa = c(' WA', 'Washington'),
+                          wi = c(' WI', 'Wisconsin'),
+                          wv = c(' WV', 'West Virginia'),
+                          wy = c(' WY', 'Wyoming')))
+
+
+#get the location field from our raw tweets and pass it through the states dictionary
+df<-bind_rows(climate,covid)%>%
+  filter(lang == "en" &
+           is_retweet == F)
+
+#will return a tokens object indicating which states people listed in their bios
+loc<-df$location%>%
+  tokens()%>%
+  tokens_lookup(dictionary=states)
+
+#some location fields list multiple states. This will keep the first one mentioned and removet the rest
+loc<-tokens_select(loc, pattern=".",endpos=1,valuetype="regex")
+
+```
+
+Now we are ready to combind our data from vader with our location estimates.
+
+
+``` {r , message=FALSE, warning=FALSE}
+#we'll need a few more packages
+library(maps)
+library(usmap)
+library(data.table)
+library(ggsn) 
+library(ggrepel) 
+```
+
+```{r, message=FALSE, warning=FALSE }
+#combine sentiment, location, and topic
+sent_vader<-cbind(sent_vader,
+                  tibble(state=as.list(loc)),
+                  corpus_twts$Topic)
+```
+
+```{r, message=FALSE, warning=FALSE }
+
+#remove cases without location data
+loc_vader<-sent_vader%>%
+  filter(!state=="character(0)")
+
+#fix a variables
+names(loc_vader)[9]<-"Topic"
+loc_vader$state<-unlist(loc_vader$state)
+
+#prepare data tables for US map functions. We only need the compund sentiment scores and US states
+climate_dt<-filter(loc_vader, Topic == "Climate")%>%
+  select(state,compound)%>%
+  as.data.table()
+  
+covid_dt<-filter(loc_vader, Topic == "Covid")%>%
+  select(state,compound)%>%
+  as.data.table()
+
+
+```
+
+To get sentiment estimates by state we'll use the tools from the data.table package. 
+
+```{r , message=FALSE, warning=FALSE}
+#calulating the mean sentiment by state within the climate data set
+climate_us_sent<-climate_dt[,mean(compound,na.rm=T),by=state]
+#re-order to alphabetical
+climate_us_sent<-arrange(climate_us_sent, state)
+#add a column with the number of tweets per state in the data
+climate_us_sent$n<-table(climate_dt$state)
+#take a peek
+head(climate_us_sent)
+```
+Our sample is definitely too small to draw many conclusions about the majority of states. But for an example this will work just fine. 
+
+```{r , message=FALSE, warning=FALSE}
+#repeat for covid
+covid_us_sent<-covid_dt[,mean(compound,na.rm=T),by=state]
+covid_us_sent<-arrange(covid_us_sent, state)
+covid_us_sent$n<-table(covid_dt$state)
+head(covid_us_sent)
+
+```
+
+Next we need to add the FIPS values to index our state data with the map package we will use. 
+
+```{r , message=FALSE, warning=FALSE}
+#change the state abbreviations in this data so it matches ours
+statepop$abbr<-tolower(statepop$abbr)
+#left join to add FIPS
+climate_us_sent<-left_join(climate_us_sent, select(statepop,fips,abbr),by=c("state"="abbr"))
+
+#covid
+covid_us_sent<-left_join(covid_us_sent, select(statepop,fips,abbr),by=c("state"="abbr"))
+
+```
+
+Now we are ready to map!
+
+
+```{r , message=FALSE, warning=FALSE}
+plot_usmap(data = filter(climate_us_sent,n>5), values = "V1", color = "gray42") + 
+  scale_fill_continuous(name = "VADER Sentiment", 
+                        low="red2",
+                        high="white",
+                        label = scales::comma) +  
+  theme(legend.position = "right") +
+  labs(title="Sentiment Accompanying Tweets about Climate Change by State")
+
+
+```
+
+```{r , message=FALSE, warning=FALSE}
+plot_usmap(data = filter(covid_us_sent,n>5), values = "V1", color = "gray42") + 
+  scale_fill_continuous(name = "VADER Sentiment", 
+                        low="blue2",
+                        high="white",
+                        label = scales::comma) +  
+  theme(legend.position = "right") +
+  labs(title="Sentiment Accompanying Tweets about COVID-19 by State")
+
+```
+
+Our practice data set is only a few thousand tweets from a single day, so we can hardly draw strong conclusion from this. But the amoung of data available for these types of analyses is near limitless. In an afternoon, you could easily boost this same analyses with a sample of hundreds of thousands of tweets. In the next section, we'll revisit the data acquisition step and address a few obstacles that come up when you try to collect a larger data set. Then, we'll use that large sample to train word embeddings. 
