@@ -1,0 +1,73 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+#install.packages("InteractionPoweR")
+library(InteractionPoweR)
+```
+
+```{r}
+power_test = power_interaction_r2(
+                  alpha = 0.05,                   # p-value
+                  N = 450,                        # sample size
+                  r.x1.y = .2,                    # correlation between x1 and y
+                  r.x2.y = .1,                    # correlation between x2 and y
+                  r.x1.x2 = .2,                   # correlation between x1 and x2
+                  r.x1x2.y = .15,                 # correlation between x1x2 and y
+                  rel.x1 =  seq(.2,1,by=.1),      # x1 reliability    
+                  rel.x2 =  seq(.2,1,by=.1),      # x2 reliability          
+                  rel.y  =  seq(.2,1,by=.2))      # y reliability          
+
+plot_power_curve(power_data = power_test, # output from power_interaction()
+                 power_target = .9,       # the power we want to achieve 
+                 x     = "rel.x1",        # x-axis
+                 group = "rel.x2",        # grouping variable
+                 facets= "rel.y"          # facets variable
+                 )
+```
+
+
+```{r}
+
+
+test_data = generate_interaction(
+                  N = 450,                        # sample size
+                  r.x1.y = .2,                    # correlation between x1 and y
+                  r.x2.y = .1,                    # correlation between x2 and y
+                  r.x1.x2 = .2,                   # correlation between x1 and x2
+                  r.x1x2.y = .15,                 # correlation between x1x2 and y
+  k.x1 = 0,
+  k.x2 = 2,
+  k.y = 2,
+                  adjust.correlations = TRUE)     # Adjust correlations? 
+plot_interaction(data =test_data )
+```
+
+```{r}
+power_test = power_interaction(
+  N=seq(from=50,to=500,by=25),
+  r.x1.y = .2,
+  r.x2.y = .2,
+  r.x1.x2 = .1,
+                  r.x1x2.y = seq(from=0,to=1,by=.1),# correlation between x1 and y
+                  # r.x2.y = .1,                    # correlation between x2 and y
+                  # r.x1.x2 = .2,                   # correlation between x1 and x2
+                  # r.x1x2.y = .15,                 # correlation between x1x2 and y
+  k.x1 = 0,
+  k.x2 = 3,
+  k.y = 2,
+  n.iter=100
+)
+
+plot_power_curve(power_data = power_test, # output from power_interaction()
+                 power_target = .8,       # the power we want to achieve 
+                 x     = "N",        # x-axis
+                 group = "r.x1x2.y",        # grouping variable
+                 )
+```
+
+

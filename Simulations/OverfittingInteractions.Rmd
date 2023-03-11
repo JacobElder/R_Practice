@@ -1,0 +1,242 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Two-Way Interaction
+
+```{r}
+# Set the seed for reproducibility
+set.seed(123)
+
+# Set the sample size
+n <- 400
+
+# Set the population size
+N <- 1000000
+
+fiter<-100
+
+num_sims <- 1000
+
+fullMat <- matrix(ncol=2,nrow=fiter)
+
+for(p in 1:fiter){
+
+# Generate data for the three continuous variables
+x1 <- rnorm(N, mean = 0, sd = 1)
+x2 <- rnorm(N, mean = 0, sd = 1)
+
+# Generate the response variable with the three-way interaction
+y <- 0 + 0*x1 + 0*x2 + (x1*x2*x3)*0 + rnorm(N, mean = 0, sd = 2)
+
+# Create a dataframe with the variables
+data <- data.frame(y, x1, x2)
+
+# Set the number of simulations and the false positive rate
+num_sims <- 1000
+alpha <- 0.05
+
+# Initialize a counter for the number of times the null hypothesis is rejected
+rejections <- 0
+
+errorMat <- matrix(ncol=1,nrow=num_sims)
+
+# Run the simulations
+for (i in 1:num_sims) {
+  
+  # Generate random indices for a training and test set
+  train_indices <- sample(1:N, .8*n)
+  test_indices <- sample(setdiff(1:N, train_indices), .2*n)
+  
+  # Create the training and test sets
+  train_data <- data[train_indices, ]
+  test_data <- data[test_indices, ]
+  
+  model <- lm(y ~ x1*x2, data = train_data)
+  
+  # Perform the hypothesis test for the three-way interaction term
+  p_value <- summary(model)$coefficients[4,4]
+  
+  # Check if the p-value is less than the significance level
+  if (p_value < alpha) {
+    rejections <- rejections + 1
+    
+    preds <- predict(model, test_data)
+    errorMat[i,1] <- rae(test_data$y, preds)
+    
+  }
+  
+}
+
+# Calculate the power of the test
+FP <- rejections / num_sims
+
+# Print the power
+#print(FP)
+
+fullMat[p, ] <- c(FP, mean(errorMat,na.rm=T))
+
+}
+```
+
+```{r}
+library(foreach)
+library(doParallel)
+
+# Register the number of cores to use for parallelization
+num_cores <- detectCores() - 1
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Set the seed for reproducibility
+set.seed(123)
+
+mat2OF <- foreach(p=1:fiter, .combine = rbind, .packages = c("foreach", "doParallel","Metrics")) %dopar% {
+  
+  
+  
+# Set the sample size
+n <- 400
+
+# Set the population size
+N <- 1000000
+
+fiter<-100
+
+num_sims <- 1000#1000
+
+fullMat <- matrix(ncol=2,nrow=fiter)
+  
+  
+  
+  
+  
+  # Generate data for the three continuous variables
+  x1 <- rnorm(N, mean = 0, sd = 1)
+  x2 <- rnorm(N, mean = 0, sd = 1)
+
+  # Generate the response variable with the three-way interaction
+  y <- 0 + 0*x1 + 0*x2 + rnorm(N, mean = 0, sd = 2)
+
+  # Create a dataframe with the variables
+  data <- data.frame(y, x1, x2)
+
+  # Set the number of simulations and the false positive rate
+  num_sims <- 1000
+  alpha <- 0.05
+
+  # Initialize a counter for the number of times the null hypothesis is rejected
+  rejections <- 0
+
+  errorMat <- matrix(ncol=1,nrow=num_sims)
+
+  # Run the simulations
+  for (i in 1:num_sims) {
+
+    # Generate random indices for a training and test set
+    train_indices <- sample(1:N, .8*n)
+    test_indices <- sample(setdiff(1:N, train_indices), .2*n)
+
+    # Create the training and test sets
+    train_data <- data[train_indices, ]
+    test_data <- data[test_indices, ]
+
+    model <- lm(y ~ x1*x2, data = train_data)
+
+    # Perform the hypothesis test for the three-way interaction term
+    p_value <- summary(model)$coefficients[4,4]
+
+    # Check if the p-value is less than the significance level
+    if (p_value < alpha) {
+      rejections <- rejections + 1
+
+      preds <- predict(model, test_data)
+      errorMat[i,1] <- rae(test_data$y, preds)
+
+    }
+
+  }
+
+  # Calculate the power of the test
+FP <- rejections / num_sims
+
+# Print the power
+#print(FP)
+
+c(FP, mean(errorMat,na.rm=T))
+
+}
+
+```
+
+
+
+
+
+```{r}
+# Set the seed for reproducibility
+#set.seed(123)
+
+# Set the sample size
+n <- 400
+
+# Set the population size
+N <- 1000000
+
+# Generate data for the three continuous variables
+x1 <- rnorm(N, mean = 0, sd = 1)
+x2 <- rnorm(N, mean = 0, sd = 1)
+x3 <- rnorm(N, mean = 0, sd = 1)
+
+# Generate the response variable with the three-way interaction
+y <- 0 + 0*x1 + 0*x2 + 0*x3 + (x1*x2*x3)*0 + rnorm(N, mean = 0, sd = 2)
+
+# Create a dataframe with the variables
+data <- data.frame(y, x1, x2, x3)
+
+# Set the number of simulations and the false positive rate
+num_sims <- 1000
+alpha <- 0.05
+
+# Initialize a counter for the number of times the null hypothesis is rejected
+rejections <- 0
+
+errorMat <- matrix(ncol=1,nrow=num_sims)
+
+# Run the simulations
+for (i in 1:num_sims) {
+  
+  # Generate random indices for a training and test set
+  train_indices <- sample(1:N, .8*n)
+  test_indices <- sample(setdiff(1:N, train_indices), .2*n)
+  
+  # Create the training and test sets
+  train_data <- data[train_indices, ]
+  test_data <- data[test_indices, ]
+  
+  model <- lm(y ~ x1 + x2 + x3 + x1*x2 + x1*x3 + x2*x3 + x1*x2*x3, data = train_data)
+  
+  # Perform the hypothesis test for the three-way interaction term
+  p_value <- summary(model)$coefficients[8,4]
+  
+  # Check if the p-value is less than the significance level
+  if (p_value < alpha) {
+    rejections <- rejections + 1
+    
+    preds <- predict(model, test_data)
+    errorMat[i,1] <- rae(test_data$y, preds)
+    
+  }
+  
+}
+
+# Calculate the power of the test
+FP <- rejections / num_sims
+
+# Print the power
+print(FP)
+```
+
+
+

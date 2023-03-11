@@ -1,0 +1,12 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+FLUXDATA<-data.frame(LFUX=rexp(500),Temp=rnorm(500),IRR=rnorm(500))
+
+finalexpmodel = nls(LFLUX ~ b1*exp(b2 * Temp + b3  * Temp^2) + b4 * IRR + b5, data = FLUXDATA, start = list(b1 = 1, b2 = 0.5, b3 = 0.5, b4 = 0.5, b5 = 0.5), control = list(maxiter = 2000))
+summary(finalexpmodel)
+```
