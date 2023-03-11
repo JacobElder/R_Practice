@@ -1,0 +1,13 @@
+name: Bootstrapping
+title: Bootstrapping
+username:
+account: jacobelder
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 7971043
+bundleId: 6694634
+url: https://jacobelder.shinyapps.io/Bootstrapping/
+when: 1672782804.1317
+lastSyncTime: 1672782804.13171
+asMultiple: FALSE
+asStatic: FALSE
