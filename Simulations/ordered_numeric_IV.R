@@ -6,7 +6,7 @@ ordered(OF)
 OF <- c(0,20,40,60,80,100)
 
 # Set seed for reproducibility
-set.seed(150)
+set.seed(250)
 
 # Number of observations
 n <- 300
@@ -20,7 +20,7 @@ outcome <- rnorm(n,0) + .02*OF + rnorm(n)
 ## AS NUMERIC
 
 # Fit linear regression model
-model_Numeric <- lm(outcome ~ OF)
+model_Numeric <- lm(scale(outcome) ~ scale(OF))
 
 # Print model summary
 summary(model_Numeric)
@@ -28,7 +28,7 @@ summary(model_Numeric)
 ## AS FACTOR
 
 # Fit linear regression model
-model_Factor <- lm(outcome ~ ordered(OF))
+model_Factor <- lm(scale(outcome) ~ ordered(OF))
 
 # Print model summary
 summary(model_Factor)
